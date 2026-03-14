@@ -1,0 +1,117 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportHeight="108"
+    android:viewportWidth="108">
+
+    <!-- Card body - centered in 108x108 with 18dp safe zone -->
+    <!-- Card is 40x52 in original, scaled to fit ~44x57 centered at 54,54 -->
+    <!-- Offset: x=32, y=25.5 to center a 44x57 card -->
+
+    <!-- Card body -->
+    <path
+        android:pathData="M36,28 L72,28 Q76,28 76,32 L76,76 Q76,80 72,80 L36,80 Q32,80 32,76 L32,32 Q32,28 36,28 Z"
+        android:strokeWidth="2.2">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="32"
+                android:startY="28"
+                android:endX="76"
+                android:endY="80"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF1a1040" />
+                <item android:offset="1" android:color="#FF13132a" />
+            </gradient>
+        </aapt:attr>
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="32"
+                android:startY="28"
+                android:endX="76"
+                android:endY="80"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF8B5CF6" />
+                <item android:offset="0.5" android:color="#FFF59E0B" />
+                <item android:offset="1" android:color="#FF3b82f6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner frame -->
+    <path
+        android:pathData="M35.3,31.5 L72.7,31.5 Q74.5,31.5 74.5,33.3 L74.5,74.7 Q74.5,76.5 72.7,76.5 L35.3,76.5 Q33.5,76.5 33.5,74.7 L33.5,33.3 Q33.5,31.5 35.3,31.5 Z"
+        android:fillColor="#00000000"
+        android:strokeColor="#59F59E0B"
+        android:strokeWidth="1" />
+
+    <!-- Top art area -->
+    <path
+        android:pathData="M37,35 L71,35 Q72.5,35 72.5,36.5 L72.5,54 Q72.5,55.5 71,55.5 L37,55.5 Q35.5,55.5 35.5,54 L35.5,36.5 Q35.5,35 37,35 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="35.5"
+                android:startY="35"
+                android:endX="72.5"
+                android:endY="55.5"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF2d1b69" />
+                <item android:offset="1" android:color="#FF1e3a5f" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Art shine streak -->
+    <path
+        android:pathData="M38,37 L49,35.5 L50,55 L37,50 Z"
+        android:fillColor="#17FFFFFF" />
+
+    <!-- Star burst 4-point -->
+    <path
+        android:pathData="M54,39 L55.8,44.4 L61,45.7 L55.8,47 L54,52.4 L52.2,47 L47,45.7 L52.2,44.4 Z"
+        android:fillColor="#F2F59E0B" />
+
+    <!-- Star inner shine -->
+    <path
+        android:pathData="M54,41 L55.2,44.4 L58.5,45.7 L55.2,47 L54,50.4 L52.8,47 L49.5,45.7 L52.8,44.4 Z"
+        android:fillColor="#4DFFFFFF" />
+
+    <!-- Name bar -->
+    <path
+        android:pathData="M37,58.5 L56,58.5 Q57.5,58.5 57.5,59.5 L57.5,60.5 Q57.5,61.5 56,61.5 L37,61.5 Q35.5,61.5 35.5,60.5 L35.5,59.5 Q35.5,58.5 37,58.5 Z"
+        android:fillColor="#80F59E0B" />
+
+    <!-- Sub line 1 -->
+    <path
+        android:pathData="M37,64 L71,64 Q72,64 72,65 L72,65.5 Q72,66 71,66 L37,66 Q36,66 36,65.5 L36,65 Q36,64 37,64 Z"
+        android:fillColor="#1FFFFFFF" />
+
+    <!-- Sub line 2 -->
+    <path
+        android:pathData="M37,68 L62,68 Q63,68 63,69 L63,69.5 Q63,70 62,70 L37,70 Q36,70 36,69.5 L36,69 Q36,68 37,68 Z"
+        android:fillColor="#14FFFFFF" />
+
+    <!-- Bottom HP dots (circles as arc paths for API 24 compat) -->
+    <path
+        android:pathData="M69.2,74 A2.2,2.2 0 1,1 64.8,74 A2.2,2.2 0 1,1 69.2,74 Z"
+        android:fillColor="#B38B5CF6" />
+    <path
+        android:pathData="M63.7,74 A2.2,2.2 0 1,1 59.3,74 A2.2,2.2 0 1,1 63.7,74 Z"
+        android:fillColor="#803b82f6" />
+
+    <!-- Corner sparkle -->
+    <path
+        android:pathData="M71.5,37.5 A1.5,1.5 0 1,1 68.5,37.5 A1.5,1.5 0 1,1 71.5,37.5 Z"
+        android:fillColor="#99FFFFFF" />
+    <path
+        android:pathData="M70,35 L70,40"
+        android:strokeColor="#66FFFFFF"
+        android:strokeWidth="0.9"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M67.5,37.5 L72.5,37.5"
+        android:strokeColor="#66FFFFFF"
+        android:strokeWidth="0.9"
+        android:fillColor="#00000000" />
+
+</vector>

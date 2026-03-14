@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Poketeer</string>
+    <string name="title_activity_main">Poketeer</string>
+    <string name="package_name">com.poketeer.app</string>
+    <string name="custom_url_scheme">com.poketeer.app</string>
+</resources>

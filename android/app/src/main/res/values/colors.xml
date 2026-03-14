@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App background color — deep dark navy -->
+    <color name="colorPrimary">#8B5CF6</color>
+    <color name="colorPrimaryDark">#07070f</color>
+    <color name="colorAccent">#F59E0B</color>
+    <color name="colorBackground">#07070f</color>
+</resources>

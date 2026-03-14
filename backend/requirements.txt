@@ -1,0 +1,19 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+torch==2.3.1
+torchvision==0.18.1
+Pillow==10.4.0
+numpy<2
+requests==2.32.3
+python-multipart==0.0.9
+tqdm==4.66.5
+easyocr==1.7.1
+rapidfuzz==3.9.3
+python-dotenv==1.0.1
+
+# Card detection (Roboflow integration)
+inference-sdk>=0.9.0
+roboflow>=1.1.0
+
+# Local YOLO training & inference (optional — only needed for train_detector.py)
+# ultralytics>=8.0.0
