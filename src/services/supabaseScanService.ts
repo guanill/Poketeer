@@ -47,10 +47,10 @@ export async function supabaseScan(
   }
 
   // 3. Query Supabase pgvector
-  const embeddingArray = Array.from(embedding);
+  const embeddingStr = '[' + Array.from(embedding).join(',') + ']';
 
   const { data, error } = await supabase.rpc('match_card', {
-    query_embedding: embeddingArray,
+    query_embedding: embeddingStr,
     match_count: topK,
   });
 
@@ -66,20 +66,7 @@ export async function supabaseScan(
   }
 
   // 4. Map results to ScanMatch format
-  const matches: ScanMatch[] = (data ?? []).map((row: {
-    id: string;
-    name: string;
-    number: string;
-    set_id: string;
-    rarity: string;
-    image_small: string;
-    image_large: string;
-    supertype: string;
-    subtypes: string[];
-    hp: string;
-    artist: string;
-    similarity: number;
-  }) => ({
+  const matches: ScanMatch[] = (data ?? []).map((row) => ({
     id: row.id,
     name: row.name,
     number: row.number,

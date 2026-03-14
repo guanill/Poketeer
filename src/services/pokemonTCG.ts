@@ -203,12 +203,7 @@ export const pokemonTCGService = {
     if (error) throw error;
 
     // search_cards_fuzzy returns flat rows — map to PokemonCard shape
-    const cards: PokemonCard[] = (data ?? []).map((row: {
-      id: string; name: string; number: string; set_id: string;
-      rarity: string; image_small: string; image_large: string;
-      supertype: string; subtypes: string[]; hp: string;
-      artist: string; types: string[]; similarity: number;
-    }) => ({
+    const cards: PokemonCard[] = (data ?? []).map((row) => ({
       id: row.id,
       name: row.name,
       number: row.number,
@@ -228,7 +223,7 @@ export const pokemonTCGService = {
     return { data: cards, totalCount, page, pageSize, count: cards.length };
   },
 
-  async getIntlCardsBySet(lang: 'ja' | 'th', setId: string, page = 1, pageSize = 60): Promise<CardsResponse> {
+  async getIntlCardsBySet(_lang: 'ja' | 'th', setId: string, page = 1, pageSize = 60): Promise<CardsResponse> {
     if (isNativePlatform()) return { data: [], totalCount: 0, page, pageSize, count: 0 };
 
     // International cards live in the same cards table, linked to sets with the right language

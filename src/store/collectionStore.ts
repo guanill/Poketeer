@@ -96,7 +96,7 @@ export const useCollectionStore = create<CollectionStore>()(
             ? { ...existing, quantity: existing.quantity + 1 }
             : { cardId, quantity: 1, pricePaid, condition, notes, dateAdded: new Date().toISOString() };
           // Sync to Supabase in background
-          _getUser().then(uid => uid && _upsertCollection(uid, cardId, card));
+          _getUser().then(uid => { if (uid) _upsertCollection(uid, cardId, card); });
           return { owned: { ...state.owned, [cardId]: card } };
         });
       },
@@ -105,7 +105,7 @@ export const useCollectionStore = create<CollectionStore>()(
         set(state => {
           const next = { ...state.owned };
           delete next[cardId];
-          _getUser().then(uid => uid && _deleteCollection(uid, cardId));
+          _getUser().then(uid => { if (uid) _deleteCollection(uid, cardId); });
           return { owned: next };
         });
       },
@@ -113,7 +113,7 @@ export const useCollectionStore = create<CollectionStore>()(
       updateCard: (cardId, updates) => {
         set(state => {
           const card = { ...state.owned[cardId], ...updates };
-          _getUser().then(uid => uid && _upsertCollection(uid, cardId, card));
+          _getUser().then(uid => { if (uid) _upsertCollection(uid, cardId, card); });
           return { owned: { ...state.owned, [cardId]: card } };
         });
       },
@@ -128,12 +128,12 @@ export const useCollectionStore = create<CollectionStore>()(
       addToWishlist: (cardId, targetPrice, priority = 'Medium') => {
         if (get().isInWishlist(cardId)) return;
         const item: WishlistItem = { cardId, targetPrice, priority, dateAdded: new Date().toISOString() };
-        _getUser().then(uid => uid && _upsertWishlist(uid, item));
+        _getUser().then(uid => { if (uid) _upsertWishlist(uid, item); });
         set(state => ({ wishlist: [...state.wishlist, item] }));
       },
 
       removeFromWishlist: (cardId) => {
-        _getUser().then(uid => uid && _deleteWishlist(uid, cardId));
+        _getUser().then(uid => { if (uid) _deleteWishlist(uid, cardId); });
         set(state => ({ wishlist: state.wishlist.filter(w => w.cardId !== cardId) }));
       },
 
@@ -143,7 +143,7 @@ export const useCollectionStore = create<CollectionStore>()(
         set(state => {
           const wishlist = state.wishlist.map(w => w.cardId === cardId ? { ...w, ...updates } : w);
           const updated = wishlist.find(w => w.cardId === cardId);
-          if (updated) _getUser().then(uid => uid && _upsertWishlist(uid, updated));
+          if (updated) _getUser().then(uid => { if (uid) _upsertWishlist(uid, updated); });
           return { wishlist };
         });
       },
