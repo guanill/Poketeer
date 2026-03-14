@@ -58,6 +58,8 @@ export interface PokemonCard {
   nationalPokedexNumbers?: number[];
 }
 
+export type CardVariant = 'normal' | 'holofoil' | 'reverseHolofoil' | 'firstEdition';
+
 export interface OwnedCard {
   cardId: string;
   quantity: number;
@@ -65,6 +67,7 @@ export interface OwnedCard {
   dateAdded: string;
   condition: CardCondition;
   notes?: string;
+  variants?: CardVariant[];
 }
 
 export type CardCondition = 'Mint' | 'Near Mint' | 'Excellent' | 'Good' | 'Light Play' | 'Played' | 'Poor';

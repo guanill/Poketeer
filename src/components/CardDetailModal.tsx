@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink } from 'lucide-react';
-import type { PokemonCard, CardCondition } from '../types';
+import type { PokemonCard, CardCondition, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
-import { getCardMarketPrice, getRarityColor } from '../services/pokemonTCG';
+import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
+
+const VARIANT_META: Record<CardVariant, { label: string; color: string; bg: string }> = {
+  normal: { label: 'Normal', color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' },
+  holofoil: { label: 'Holofoil', color: '#fbbf24', bg: 'rgba(251,191,36,0.15)' },
+  reverseHolofoil: { label: 'Reverse Holo', color: '#a78bfa', bg: 'rgba(167,139,250,0.15)' },
+  firstEdition: { label: '1st Edition', color: '#f472b6', bg: 'rgba(244,114,182,0.15)' },
+};
 
 interface CardDetailModalProps {
   card: PokemonCard | null;
@@ -25,6 +32,7 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
   const addCard = useCollectionStore(s => s.addCard);
   const removeCard = useCollectionStore(s => s.removeCard);
   const updateCard = useCollectionStore(s => s.updateCard);
+  const toggleVariant = useCollectionStore(s => s.toggleVariant);
   const addToWishlist = useCollectionStore(s => s.addToWishlist);
   const removeFromWishlist = useCollectionStore(s => s.removeFromWishlist);
   const setCustomPriceStore = useCollectionStore(s => s.setCustomPrice);
@@ -225,31 +233,64 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                   animate={{ opacity: 1, y: 0 }}
                   className="space-y-3"
                 >
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-yellow-400/10 border border-yellow-400/20">
-                    <div>
-                      <p className="text-sm font-semibold text-yellow-400">In Your Collection</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {owned.quantity}× · {owned.condition} · 
-                        {owned.pricePaid ? ` Paid: $${owned.pricePaid.toFixed(2)}` : ' Price not set'}
-                      </p>
+                  <div className="p-3 rounded-xl bg-yellow-400/10 border border-yellow-400/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-yellow-400">In Your Collection</p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {owned.quantity}× · {owned.condition} ·
+                          {owned.pricePaid ? ` Paid: $${owned.pricePaid.toFixed(2)}` : ' Price not set'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => updateCard(card.id, { quantity: owned.quantity + 1 })}
+                          className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white transition-colors"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        <button
+                          onClick={() => owned.quantity > 1
+                            ? updateCard(card.id, { quantity: owned.quantity - 1 })
+                            : removeCard(card.id)
+                          }
+                          className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
+                        >
+                          <Minus size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => updateCard(card.id, { quantity: owned.quantity + 1 })}
-                        className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-white transition-colors"
-                      >
-                        <Plus size={14} />
-                      </button>
-                      <button
-                        onClick={() => owned.quantity > 1 
-                          ? updateCard(card.id, { quantity: owned.quantity - 1 })
-                          : removeCard(card.id)
-                        }
-                        className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
-                      >
-                        <Minus size={14} />
-                      </button>
-                    </div>
+
+                    {/* Variant toggles — only show variants this card actually comes in */}
+                    {(() => {
+                      const available = getAvailableVariants(card);
+                      return available.length > 1 || (available.length === 1 && available[0] !== 'normal') ? (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1.5">Variants owned</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {available.map(key => {
+                              const { label, color, bg } = VARIANT_META[key];
+                              const active = owned.variants?.includes(key);
+                              return (
+                                <button
+                                  key={key}
+                                  onClick={() => toggleVariant(card.id, key)}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold transition-all"
+                                  style={{
+                                    background: active ? bg : 'rgba(255,255,255,0.04)',
+                                    color: active ? color : '#6b7280',
+                                    border: `1px solid ${active ? color + '50' : 'rgba(255,255,255,0.08)'}`,
+                                    boxShadow: active ? `0 0 8px ${color}30` : 'none',
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                 </motion.div>
               ) : (

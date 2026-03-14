@@ -98,20 +98,18 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
             </div>
           </>
         ) : (
-          /* No logo available (JP/TH) — styled name banner */
+          /* No logo available (JP/TH) — pokeball + name */
           <>
-            {/* decorative blurred circle */}
             <div className="absolute -right-4 -top-4 w-20 h-20 rounded-full opacity-20 blur-xl"
               style={{ background: getProgressColor() }} />
-            <div className="absolute -left-4 -bottom-4 w-16 h-16 rounded-full opacity-10 blur-xl"
-              style={{ background: getProgressColor() }} />
             <div className="relative flex items-center gap-2.5 px-3 w-full">
-              <div
-                className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center text-xs font-black leading-none"
-                style={{ background: getProgressColor() + '30', color: getProgressColor(), border: `1px solid ${getProgressColor()}50` }}
-              >
-                {Array.from(set.name)[0]}
-              </div>
+              <svg className="shrink-0 w-7 h-7 opacity-60" viewBox="0 0 100 100" fill="none">
+                <circle cx="50" cy="50" r="46" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                <line x1="4" y1="50" x2="36" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                <line x1="64" y1="50" x2="96" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                <circle cx="50" cy="50" r="14" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                <circle cx="50" cy="50" r="6" fill="currentColor" className="text-gray-500" />
+              </svg>
               <span className="text-white/85 font-bold text-sm line-clamp-2 leading-tight">{set.name}</span>
             </div>
           </>

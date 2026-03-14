@@ -1,9 +1,16 @@
 import { useState, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import { Plus, Minus, Heart, DollarSign, Eye } from 'lucide-react';
-import type { PokemonCard } from '../types';
+import type { PokemonCard, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
-import { getCardMarketPrice, getRarityColor } from '../services/pokemonTCG';
+import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
+
+const VARIANT_ICONS: Record<CardVariant, { label: string; abbr: string; color: string; bg: string }> = {
+  normal: { label: 'Normal', abbr: 'N', color: '#9ca3af', bg: 'rgba(156,163,175,0.25)' },
+  holofoil: { label: 'Holofoil', abbr: 'H', color: '#fbbf24', bg: 'rgba(251,191,36,0.25)' },
+  reverseHolofoil: { label: 'Reverse Holo', abbr: 'R', color: '#a78bfa', bg: 'rgba(167,139,250,0.25)' },
+  firstEdition: { label: '1st Edition', abbr: '1st', color: '#f472b6', bg: 'rgba(244,114,182,0.25)' },
+};
 
 interface CardItemProps {
   card: PokemonCard;
@@ -142,13 +149,38 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
           </div>
         )}
         {isOwned && (
-          <div className="flex items-center justify-center mt-1">
-            <span className="text-xs px-2 py-0.5 rounded-full font-black"
-              style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.28)' }}
-            >
-              ×{owned.quantity} owned
-            </span>
-          </div>
+          <>
+            <div className="flex items-center justify-center mt-1">
+              <span className="text-xs px-2 py-0.5 rounded-full font-black"
+                style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.28)' }}
+              >
+                ×{owned.quantity} owned
+              </span>
+            </div>
+            {(() => {
+              const available = getAvailableVariants(card);
+              const ownedVariants = (owned.variants ?? []).filter(v => available.includes(v));
+              if (available.length <= 1 && available[0] === 'normal') return null;
+              if (ownedVariants.length === 0) return null;
+              return (
+                <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
+                  {ownedVariants.map(v => {
+                    const vi = VARIANT_ICONS[v];
+                    return (
+                      <span
+                        key={v}
+                        className="text-[9px] px-1.5 py-0.5 rounded font-black leading-none"
+                        style={{ background: vi.bg, color: vi.color, border: `1px solid ${vi.color}40` }}
+                        title={vi.label}
+                      >
+                        {vi.abbr}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </>
         )}
       </div>
 

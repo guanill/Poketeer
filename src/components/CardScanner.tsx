@@ -1,4 +1,4 @@
-﻿import { useRef, useState, useCallback, useEffect, useId } from 'react';
+import { useRef, useState, useCallback, useEffect, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera, Upload, X, Scan, AlertTriangle, CheckCircle,
@@ -129,7 +129,7 @@ function MatchRow({ match, rank, isTop }: { match: ScanMatch; rank: number; isTo
   );
 }
 
-// ── Single job card in the queue ──────────────────────────────────────────
+// -- Single job card in the queue --
 function JobCard({
   job, onToggle, onDismiss,
 }: {
@@ -139,11 +139,9 @@ function JobCard({
 }) {
   const topMatch = job.matches[0];
 
-  // Manual search fallback — shown when no matches or low confidence
   const needsManual = job.status === 'done' &&
     (job.matches.length === 0 || (topMatch?.confidence ?? 0) < 0.5);
   const rawOcrText = job.result?.ocr_text ?? '';
-  // Pre-fill with first line of top OCR output (before "[bottom]" separator)
   const ocrHint = rawOcrText.split('\n[bottom]')[0].split('\n').find(l => l.trim().length > 1) ?? '';
   const [manualQuery, setManualQuery] = useState(ocrHint);
   const [manualMatches, setManualMatches] = useState<ScanMatch[] | null>(null);
@@ -180,9 +178,8 @@ function JobCard({
         }`,
       }}
     >
-      {/* ── Job header row ── */}
+      {/* Job header row */}
       <div className="flex items-center gap-3 p-3">
-        {/* Thumbnail with scanning sweep */}
         <div className="relative shrink-0">
           <img
             src={job.previewUrl}
@@ -199,14 +196,13 @@ function JobCard({
           )}
         </div>
 
-        {/* Status / name */}
         <div className="flex-1 min-w-0">
           {job.status === 'scanning' ? (
             <div className="flex items-center gap-2 text-amber-400">
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
                 <Loader2 size={13} />
               </motion.div>
-              <span className="text-xs font-semibold">Identifying…</span>
+              <span className="text-xs font-semibold">Identifying...</span>
             </div>
           ) : job.status === 'error' ? (
             <div className="flex items-center gap-1.5 text-red-400">
@@ -244,7 +240,6 @@ function JobCard({
           )}
         </div>
 
-        {/* Action buttons */}
         <div className="flex items-center gap-1 shrink-0">
           {job.status === 'done' && displayMatches.length > 0 && !needsManual && (
             <button
@@ -263,7 +258,7 @@ function JobCard({
         </div>
       </div>
 
-      {/* ── Manual search fallback ── */}
+      {/* Manual search fallback */}
       <AnimatePresence>
         {needsManual && (
           <motion.div
@@ -274,20 +269,18 @@ function JobCard({
             className="overflow-hidden"
           >
             <div className="px-3 pb-3 border-t border-white/5 pt-3 space-y-2">
-              {/* OCR debug hint */}
               {ocrHint && (
                 <p className="text-[10px] text-gray-600 truncate">
                   OCR read: <span className="text-gray-500">{ocrHint}</span>
                 </p>
               )}
-              {/* Search input */}
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={manualQuery}
                   onChange={e => setManualQuery(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleManualSearch(manualQuery)}
-                  placeholder="Type card name…"
+                  placeholder="Type card name..."
                   className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-purple-500/50"
                 />
                 <button
@@ -301,7 +294,6 @@ function JobCard({
                   Search
                 </button>
               </div>
-              {/* Manual results */}
               {manualMatches && manualMatches.length === 0 && (
                 <p className="text-[10px] text-gray-600 text-center py-1">No results</p>
               )}
@@ -317,7 +309,7 @@ function JobCard({
         )}
       </AnimatePresence>
 
-      {/* ── Expanded match list ── */}
+      {/* Expanded match list */}
       <AnimatePresence>
         {job.expanded && displayMatches.length > 0 && (
           <motion.div
@@ -386,16 +378,13 @@ export function CardScanner() {
         setBackendUrl(url);
         setServerConnected(true);
       } else {
-        console.error('[connect] Server responded with:', res.status);
         setServerConnected(false);
       }
-    } catch (err) {
-      console.error('[connect] Failed:', err);
+    } catch {
       setServerConnected(false);
     }
   }, [serverUrl]);
 
-  // Wire stream to <video> once the element is mounted
   useEffect(() => {
     if (mode === 'camera' && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
@@ -420,7 +409,6 @@ export function CardScanner() {
     }
   }, []);
 
-  // Add a blob to the queue and immediately start scanning (fire-and-forget per job)
   const queueScan = useCallback(async (blob: Blob, previewUrl: string) => {
     const id = `${uid}-${++jobSeqRef.current}`;
     setJobs(prev => [{
@@ -441,13 +429,11 @@ export function CardScanner() {
         j.id === id ? { ...j, status: 'error', errorMsg: msg } : j
       ));
     }
-    // Note: previewUrl is kept alive for display; not revoked here
   }, [uid]);
 
   const captureFrame = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    // White flash feedback
     setShotFlash(true);
     setTimeout(() => setShotFlash(false), 180);
 
@@ -459,7 +445,6 @@ export function CardScanner() {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       queueScan(blob, url);
-      // Camera stays open — user can take the next shot immediately
     }, 'image/jpeg', 0.92);
   }, [queueScan]);
 
@@ -502,227 +487,357 @@ export function CardScanner() {
   const doneCount     = jobs.filter(j => j.status === 'done').length;
 
   return (
-    <div className="max-w-xl mx-auto space-y-4">
-
-      {/* ── Backend offline banner ─────────────────────── */}
-      <AnimatePresence>
-        {backendOk === false && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <span>
-                <strong>Scanner backend offline.</strong> Run:{' '}
-                <code className="bg-black/30 px-1 rounded">cd backend &amp;&amp; python main.py</code>
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Server connection (native only) ─────────────── */}
-      {isNativePlatform() && (
-        <div className="p-3 rounded-xl bg-white/3 border border-white/8 space-y-2">
-          <div className="flex items-center gap-2">
-            <Wifi size={13} className={serverConnected ? 'text-emerald-400' : 'text-gray-500'} />
-            <span className="text-xs font-semibold text-gray-300">PC Scanner Server</span>
-            {serverConnected === true && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 font-bold">Connected</span>
-            )}
-            {serverConnected === false && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25 font-bold">Unreachable</span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={serverUrl}
-              onChange={e => setServerUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && connectToServer()}
-              placeholder="http://192.168.1.x:8000"
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-amber-400/50"
-            />
-            <button
-              onClick={connectToServer}
-              className="px-3 py-1.5 rounded-lg bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 text-xs font-semibold border border-amber-400/25 transition-colors"
-            >
-              Connect
-            </button>
-          </div>
-          <p className="text-[10px] text-gray-600">
-            Enter your PC's IP to use ResNet50 + EasyOCR for better accuracy. Leave empty for on-device OCR.
-          </p>
-        </div>
-      )}
-
-      {/* ── CAMERA VIEW ───────────────────────────────── */}
+    <>
+      {/* ============================================================== */}
+      {/* FULLSCREEN CAMERA OVERLAY                                       */}
+      {/* ============================================================== */}
       <AnimatePresence>
         {mode === 'camera' && (
           <motion.div
-            key="camera"
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            className="relative rounded-2xl overflow-hidden bg-black"
-            style={{ minHeight: 320 }}
+            key="camera-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black flex flex-col"
           >
-            <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-2xl block" />
-
-            {/* Card outline guide */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div
-                className="rounded-xl border-2 border-amber-400/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"
-                style={{ width: 180, height: 252 }}
+            {/* Video fills the screen */}
+            <div className="relative flex-1 overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 w-full h-full object-cover"
               />
+
+              {/* Card outline guide — large, centered, card-shaped (2.5:3.5 ratio) */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div
+                  className="relative rounded-2xl border-2 border-amber-400/80"
+                  style={{
+                    width: 'min(72vw, 320px)',
+                    aspectRatio: '2.5 / 3.5',
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.5), inset 0 0 40px rgba(245,158,11,0.08)',
+                  }}
+                >
+                  {/* Corner accents */}
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-amber-400 rounded-tl-2xl" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-amber-400 rounded-tr-2xl" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-amber-400 rounded-bl-2xl" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-amber-400 rounded-br-2xl" />
+
+                  {/* Scanning sweep line */}
+                  <motion.div
+                    className="absolute inset-x-2 h-0.5 rounded-full"
+                    style={{ background: 'linear-gradient(90deg, transparent, #F59E0B, transparent)' }}
+                    animate={{ top: ['5%', '92%', '5%'] }}
+                    transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+                  />
+                </div>
+              </div>
+
+              {/* Hint text */}
+              <div className="absolute top-0 inset-x-0 pt-14 flex justify-center pointer-events-none">
+                <span className="text-white/60 text-xs font-semibold bg-black/40 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                  Align card within the frame
+                </span>
+              </div>
+
+              {/* Shot flash */}
+              <AnimatePresence>
+                {shotFlash && (
+                  <motion.div
+                    key="flash"
+                    initial={{ opacity: 0.8 }}
+                    animate={{ opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="absolute inset-0 bg-white pointer-events-none"
+                  />
+                )}
+              </AnimatePresence>
+
+              {/* Scanning count badge — top right */}
+              {scanningCount > 0 && (
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="absolute top-14 right-4 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full"
+                >
+                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
+                    <Loader2 size={12} className="text-amber-400" />
+                  </motion.div>
+                  <span className="text-xs text-amber-400 font-bold">{scanningCount} scanning</span>
+                </motion.div>
+              )}
             </div>
 
-            {/* Shot flash overlay */}
-            <AnimatePresence>
-              {shotFlash && (
-                <motion.div
-                  key="flash"
-                  initial={{ opacity: 0.75 }}
-                  animate={{ opacity: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="absolute inset-0 bg-white pointer-events-none"
-                />
-              )}
-            </AnimatePresence>
-
-            {/* Bottom controls */}
+            {/* Bottom controls bar */}
             <div
-              className="absolute bottom-0 inset-x-0 p-4 flex items-center justify-between"
-              style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)' }}
+              className="shrink-0 flex items-center justify-between px-6 py-5"
+              style={{
+                background: 'linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.7))',
+                paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)',
+              }}
             >
+              {/* Close */}
               <button
                 onClick={closeCameraAndGoIdle}
-                className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
               >
-                <X size={18} />
+                <X size={22} />
               </button>
 
+              {/* Shutter */}
               <motion.button
-                whileTap={{ scale: 0.88 }}
+                whileTap={{ scale: 0.85 }}
                 onClick={captureFrame}
-                disabled={backendOk === false}
-                className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl disabled:opacity-40"
-                style={{ background: '#F59E0B', boxShadow: '0 0 24px rgba(245,158,11,0.5)' }}
+                className="w-18 h-18 rounded-full flex items-center justify-center"
+                style={{
+                  background: 'linear-gradient(135deg, #F59E0B, #d97706)',
+                  boxShadow: '0 0 30px rgba(245,158,11,0.4), inset 0 2px 0 rgba(255,255,255,0.2)',
+                }}
               >
-                <Camera size={22} className="text-black" />
+                <div className="w-14 h-14 rounded-full border-2 border-black/20 flex items-center justify-center">
+                  <Camera size={24} className="text-black" />
+                </div>
               </motion.button>
 
-              {/* Live scanning counter */}
-              <div className="w-10 flex flex-col items-center gap-1">
-                {scanningCount > 0 && (
-                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex flex-col items-center">
-                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
-                      <Loader2 size={14} className="text-amber-400" />
-                    </motion.div>
-                    <span className="text-[10px] text-amber-400 font-bold">{scanningCount}</span>
-                  </motion.div>
-                )}
-              </div>
+              {/* Upload from gallery */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+              >
+                <Upload size={20} />
+              </button>
             </div>
+
+            {/* Latest result toast (slides up from bottom when a scan finishes while camera is open) */}
+            <AnimatePresence>
+              {jobs.length > 0 && jobs[0].status === 'done' && jobs[0].matches.length > 0 && (
+                <motion.div
+                  initial={{ y: 100, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: 100, opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                  className="absolute bottom-28 left-4 right-4 z-10"
+                  style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+                >
+                  <div
+                    className="flex items-center gap-3 p-3 rounded-xl backdrop-blur-md"
+                    style={{ background: 'rgba(26,26,46,0.92)', border: '1px solid rgba(245,158,11,0.25)' }}
+                  >
+                    <img
+                      src={jobs[0].matches[0].image_small}
+                      alt=""
+                      className="w-10 h-14 object-cover rounded-lg shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{jobs[0].matches[0].name}</p>
+                      <p className="text-[10px] text-emerald-400 font-bold">
+                        {Math.round(jobs[0].matches[0].confidence * 100)}% match
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { addCardFromMatch(jobs[0].matches[0]); }}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-400/15 text-amber-400 text-xs font-bold border border-amber-400/25 hover:bg-amber-400/25 transition-colors"
+                    >
+                      <Plus size={12} className="inline mr-1" />
+                      Add
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── IDLE / UPLOAD AREA ────────────────────────── */}
-      {mode === 'idle' && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-          <div
-            onDrop={handleDrop}
-            onDragOver={e => e.preventDefault()}
-            onClick={() => fileInputRef.current?.click()}
-            className="flex flex-col items-center justify-center gap-4 py-14 rounded-2xl border-2 border-dashed border-white/10 hover:border-amber-400/40 hover:bg-amber-400/2 transition-all cursor-pointer group"
-          >
-            <div className="w-14 h-14 rounded-full bg-amber-400/10 border border-amber-400/20 flex items-center justify-center group-hover:scale-110 group-hover:bg-amber-400/20 transition-all">
-              <Upload size={24} className="text-amber-400" />
-            </div>
-            <div className="text-center pointer-events-none">
-              <p className="font-semibold text-white text-sm">Drop card photos here</p>
-              <p className="text-xs text-gray-500 mt-1">or click to browse · multiple files supported</p>
-            </div>
-            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
-          </div>
+      {/* ============================================================== */}
+      {/* INLINE CONTENT (idle / error / scan queue)                      */}
+      {/* ============================================================== */}
+      <div className="max-w-xl mx-auto space-y-4">
 
-          {cameraSupported === false ? (
-            <div className="flex items-center gap-2 w-full py-3 px-4 rounded-xl bg-white/3 border border-white/8 text-gray-500 text-sm">
-              <Camera size={15} className="shrink-0" />
-              <span>Camera not available</span>
-              <span className="ml-auto text-xs text-gray-600">HTTPS or localhost required</span>
-            </div>
-          ) : (
-            <button
-              onClick={startCamera}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-white/5 border border-white/8 text-gray-300 hover:bg-white/10 hover:text-white transition-colors text-sm font-medium"
+        {/* Backend offline banner */}
+        <AnimatePresence>
+          {backendOk === false && mode !== 'camera' && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
             >
-              <Camera size={15} />
-              Use camera
-            </button>
-          )}
-        </motion.div>
-      )}
-
-      {/* ── ERROR ─────────────────────────────────────── */}
-      {mode === 'error' && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4 py-14 text-center">
-          <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/25 flex items-center justify-center">
-            <AlertTriangle size={22} className="text-red-400" />
-          </div>
-          <div>
-            <p className="font-semibold text-white">Camera error</p>
-            <p className="text-sm text-gray-400 mt-1 max-w-xs">{errorMsg}</p>
-          </div>
-          <button onClick={() => setMode('idle')} className="px-5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-300 hover:bg-white/10 transition-colors">
-            Go back
-          </button>
-        </motion.div>
-      )}
-
-      {/* ── SCAN QUEUE ────────────────────────────────── */}
-      <AnimatePresence>
-        {jobs.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-            {/* Queue header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Scan size={14} className="text-amber-400" />
-                <span className="text-sm font-bold text-white">Scan Queue</span>
-                {scanningCount > 0 && (
-                  <span className="text-xs px-2 py-0.5 rounded-full font-bold"
-                    style={{ background: 'rgba(245,158,11,0.15)', color: '#fcd34d' }}>
-                    {scanningCount} scanning
-                  </span>
-                )}
-                {doneCount > 0 && (
-                  <span className="text-xs px-2 py-0.5 rounded-full font-bold"
-                    style={{ background: 'rgba(52,211,153,0.12)', color: '#6ee7b7' }}>
-                    {doneCount} done
-                  </span>
-                )}
+              <div className="flex items-start gap-3 p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>
+                  <strong>Scanner backend offline.</strong> Run:{' '}
+                  <code className="bg-black/30 px-1 rounded">cd backend &amp;&amp; python main.py</code>
+                </span>
               </div>
-              {doneCount > 0 && (
-                <button onClick={clearDone} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
-                  Clear done
-                </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Server connection (native only) */}
+        {isNativePlatform() && mode !== 'camera' && (
+          <div className="p-3 rounded-xl bg-white/3 border border-white/8 space-y-2">
+            <div className="flex items-center gap-2">
+              <Wifi size={13} className={serverConnected ? 'text-emerald-400' : 'text-gray-500'} />
+              <span className="text-xs font-semibold text-gray-300">PC Scanner Server</span>
+              {serverConnected === true && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 font-bold">Connected</span>
+              )}
+              {serverConnected === false && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25 font-bold">Unreachable</span>
               )}
             </div>
-
-            {/* Job cards */}
-            <div className="space-y-2">
-              <AnimatePresence initial={false}>
-                {jobs.map(job => (
-                  <JobCard key={job.id} job={job} onToggle={toggleJob} onDismiss={dismissJob} />
-                ))}
-              </AnimatePresence>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={serverUrl}
+                onChange={e => setServerUrl(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && connectToServer()}
+                placeholder="http://192.168.1.x:8000"
+                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-amber-400/50"
+              />
+              <button
+                onClick={connectToServer}
+                className="px-3 py-1.5 rounded-lg bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 text-xs font-semibold border border-amber-400/25 transition-colors"
+              >
+                Connect
+              </button>
             </div>
+          </div>
+        )}
+
+        {/* IDLE — Camera + Upload buttons */}
+        {mode === 'idle' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
+            {/* Two big action cards side by side */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Camera button */}
+              {cameraSupported !== false ? (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={startCamera}
+                  className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-amber-400/20 transition-all group"
+                  style={{
+                    background: 'linear-gradient(160deg, rgba(245,158,11,0.08) 0%, rgba(245,158,11,0.02) 100%)',
+                  }}
+                >
+                  <div className="w-14 h-14 rounded-full bg-amber-400/15 border border-amber-400/25 flex items-center justify-center group-hover:scale-110 group-hover:bg-amber-400/25 transition-all">
+                    <Camera size={26} className="text-amber-400" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-bold text-white text-sm">Camera</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">Take a photo</p>
+                  </div>
+                </motion.button>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-white/8 bg-white/2">
+                  <div className="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center">
+                    <Camera size={26} className="text-gray-600" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-bold text-gray-500 text-sm">Camera</p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">HTTPS required</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Upload button */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => fileInputRef.current?.click()}
+                className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-violet-500/20 transition-all group"
+                style={{
+                  background: 'linear-gradient(160deg, rgba(139,92,246,0.08) 0%, rgba(139,92,246,0.02) 100%)',
+                }}
+              >
+                <div className="w-14 h-14 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center group-hover:scale-110 group-hover:bg-violet-500/25 transition-all">
+                  <Upload size={24} className="text-violet-400" />
+                </div>
+                <div className="text-center">
+                  <p className="font-bold text-white text-sm">Upload</p>
+                  <p className="text-[10px] text-gray-500 mt-0.5">From gallery</p>
+                </div>
+              </motion.button>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onDrop={handleDrop}
+              onDragOver={e => e.preventDefault()}
+              className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-white/10 hover:border-amber-400/30 hover:bg-amber-400/2 transition-all cursor-pointer text-gray-500 hover:text-gray-300"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload size={14} />
+              <span className="text-xs font-medium">or drag & drop images here</span>
+            </div>
+
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
           </motion.div>
         )}
-      </AnimatePresence>
 
-    </div>
+        {/* ERROR */}
+        {mode === 'error' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4 py-12 text-center">
+            <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/25 flex items-center justify-center">
+              <AlertTriangle size={22} className="text-red-400" />
+            </div>
+            <div>
+              <p className="font-semibold text-white">Camera error</p>
+              <p className="text-sm text-gray-400 mt-1 max-w-xs">{errorMsg}</p>
+            </div>
+            <button onClick={() => setMode('idle')} className="px-5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-300 hover:bg-white/10 transition-colors">
+              Go back
+            </button>
+          </motion.div>
+        )}
+
+        {/* SCAN QUEUE */}
+        <AnimatePresence>
+          {jobs.length > 0 && mode !== 'camera' && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Scan size={14} className="text-amber-400" />
+                  <span className="text-sm font-bold text-white">Scan Results</span>
+                  {scanningCount > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: 'rgba(245,158,11,0.15)', color: '#fcd34d' }}>
+                      {scanningCount} scanning
+                    </span>
+                  )}
+                  {doneCount > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: 'rgba(52,211,153,0.12)', color: '#6ee7b7' }}>
+                      {doneCount} done
+                    </span>
+                  )}
+                </div>
+                {doneCount > 0 && (
+                  <button onClick={clearDone} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                    Clear done
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <AnimatePresence initial={false}>
+                  {jobs.map(job => (
+                    <JobCard key={job.id} job={job} onToggle={toggleJob} onDismiss={dismissJob} />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
   );
+}
+
+// Helper used in the camera toast
+function addCardFromMatch(match: ScanMatch) {
+  useCollectionStore.getState().addCard(match.id);
 }

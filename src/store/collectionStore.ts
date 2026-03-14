@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { OwnedCard, WishlistItem, CardCondition } from '../types';
+import type { OwnedCard, WishlistItem, CardCondition, CardVariant } from '../types';
 import { supabase } from '../lib/supabase';
 
 interface CollectionStore {
@@ -14,6 +14,7 @@ interface CollectionStore {
   addCard: (cardId: string, pricePaid?: number, condition?: CardCondition, notes?: string) => void;
   removeCard: (cardId: string) => void;
   updateCard: (cardId: string, updates: Partial<OwnedCard>) => void;
+  toggleVariant: (cardId: string, variant: CardVariant) => void;
   isOwned: (cardId: string) => boolean;
   getOwnedCount: (setId: string, cardIds: string[]) => number;
 
@@ -56,6 +57,7 @@ async function _upsertCollection(userId: string, cardId: string, card: OwnedCard
     condition: card.condition,
     notes: card.notes ?? null,
     date_added: card.dateAdded,
+    variants: card.variants ?? [],
   });
 }
 
@@ -113,6 +115,19 @@ export const useCollectionStore = create<CollectionStore>()(
       updateCard: (cardId, updates) => {
         set(state => {
           const card = { ...state.owned[cardId], ...updates };
+          _getUser().then(uid => { if (uid) _upsertCollection(uid, cardId, card); });
+          return { owned: { ...state.owned, [cardId]: card } };
+        });
+      },
+
+      toggleVariant: (cardId, variant) => {
+        set(state => {
+          const existing = state.owned[cardId];
+          if (!existing) return state;
+          const current = existing.variants ?? [];
+          const has = current.includes(variant);
+          const variants = has ? current.filter(v => v !== variant) : [...current, variant];
+          const card = { ...existing, variants };
           _getUser().then(uid => { if (uid) _upsertCollection(uid, cardId, card); });
           return { owned: { ...state.owned, [cardId]: card } };
         });
@@ -193,6 +208,7 @@ export const useCollectionStore = create<CollectionStore>()(
             condition: row.condition as CardCondition,
             notes: row.notes ?? undefined,
             dateAdded: row.date_added,
+            variants: (row as Record<string, unknown>).variants as CardVariant[] ?? [],
           };
         }
 
@@ -218,6 +234,7 @@ export const useCollectionStore = create<CollectionStore>()(
           condition: card.condition,
           notes: card.notes ?? null,
           date_added: card.dateAdded,
+          variants: card.variants ?? [],
         }));
 
         const wlRows = wishlist.map(item => ({

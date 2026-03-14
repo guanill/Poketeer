@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
-import { Search as SearchIcon, X, Sparkles } from 'lucide-react';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { Search as SearchIcon, X, Sparkles, Loader2 } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
@@ -13,11 +13,14 @@ const POPULAR_SEARCHES = [
   'Lugia', 'Gengar', 'Blaziken', 'Umbreon', 'Snorlax',
 ];
 
+const PAGE_SIZE = 30;
+
 export function Search() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<PokemonCard | null>(null);
   const [debounceTimeout, setDebounceTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const handleInput = (value: string) => {
     setQuery(value);
@@ -26,18 +29,74 @@ export function Search() {
     setDebounceTimeout(t);
   };
 
-  const { data, isLoading, isFetching } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = useInfiniteQuery({
     queryKey: ['search', debouncedQuery],
-    queryFn: () => pokemonTCGService.searchCards(debouncedQuery, 1, 30),
+    queryFn: ({ pageParam = 1 }) =>
+      pokemonTCGService.searchCards(debouncedQuery, pageParam, PAGE_SIZE),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      // totalCount === -1 means "there are more"
+      if (lastPage.totalCount === -1) return lastPage.page + 1;
+      // If we got fewer than pageSize, we're done
+      if (lastPage.count < PAGE_SIZE) return undefined;
+      return undefined;
+    },
     enabled: debouncedQuery.length >= 2,
     staleTime: 1000 * 60 * 5,
   });
 
-  const cards = data?.data ?? [];
+  const allCards = data?.pages.flatMap((p) => p.data) ?? [];
+
+  // Infinite scroll observer
+  const handleObserver = useCallback(
+    (entries: IntersectionObserverEntry[]) => {
+      const target = entries[0];
+      if (target.isIntersecting && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    },
+    [hasNextPage, isFetchingNextPage, fetchNextPage],
+  );
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(handleObserver, { threshold: 0.1 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [handleObserver]);
+
+  // Build result count text
+  const resultText = (() => {
+    if (!data || allCards.length === 0) return null;
+    const lastPage = data.pages[data.pages.length - 1];
+    if (lastPage.totalCount === -1) {
+      // We know there are more
+      return (
+        <>
+          <span className="text-amber-400/80 font-bold">{allCards.length}+</span> results for{' '}
+          <span className="text-white font-bold">"{debouncedQuery}"</span>
+        </>
+      );
+    }
+    return (
+      <>
+        <span className="text-amber-400/80 font-bold">{allCards.length}</span> results for{' '}
+        <span className="text-white font-bold">"{debouncedQuery}"</span>
+      </>
+    );
+  })();
 
   return (
     <div className="space-y-6">
-      {/* ── Header ───────────────────────────────────────── */}
+      {/* Header */}
       <div>
         <p className="page-section-label mb-1.5">Card Database</p>
         <h1 className="text-3xl font-black flex items-center gap-2.5">
@@ -50,12 +109,12 @@ export function Search() {
 
       <div className="gradient-divider" />
 
-      {/* ── Search Input ─────────────────────────────────── */}
+      {/* Search Input */}
       <div className="relative">
         <SearchIcon size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
         <input
           type="text"
-          placeholder="Search by card name…"
+          placeholder="Search by card name..."
           value={query}
           onChange={(e) => handleInput(e.target.value)}
           autoFocus
@@ -69,7 +128,7 @@ export function Search() {
             <X size={16} />
           </button>
         )}
-        {isFetching && (
+        {isFetching && !isFetchingNextPage && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2">
             <motion.div
               animate={{ rotate: 360 }}
@@ -80,7 +139,7 @@ export function Search() {
         )}
       </div>
 
-      {/* ── Popular Searches ─────────────────────────────── */}
+      {/* Popular Searches */}
       {!debouncedQuery && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -109,31 +168,34 @@ export function Search() {
         </motion.div>
       )}
 
-      {/* ── Results ──────────────────────────────────────── */}
+      {/* Results */}
       <AnimatePresence mode="wait">
         {isLoading && debouncedQuery ? (
           <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <LoadingSkeleton count={12} type="card" />
           </motion.div>
-        ) : cards.length > 0 ? (
+        ) : allCards.length > 0 ? (
           <motion.div
             key="results"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <p className="text-sm text-gray-500 mb-4">
-              <span className="text-amber-400/80 font-bold">{data?.totalCount}</span> results for{' '}
-              <span className="text-white font-bold">"{debouncedQuery}"</span>
-              {data?.totalCount && data.totalCount > 30 ? (
-                <span className="text-gray-600"> · showing first 30</span>
-              ) : null}
-            </p>
+            <p className="text-sm text-gray-500 mb-4">{resultText}</p>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-              {cards.map((card) => (
+              {allCards.map((card) => (
                 <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
               ))}
             </div>
+
+            {/* Infinite scroll sentinel */}
+            <div ref={sentinelRef} className="h-4" />
+
+            {isFetchingNextPage && (
+              <div className="flex justify-center py-6">
+                <Loader2 size={24} className="animate-spin text-amber-400/60" />
+              </div>
+            )}
           </motion.div>
         ) : debouncedQuery.length >= 2 && !isLoading ? (
           <motion.div
@@ -146,7 +208,7 @@ export function Search() {
               border: '1px solid rgba(139,92,246,0.1)',
             }}
           >
-            <div className="text-5xl mb-4 opacity-40">🃏</div>
+            <div className="text-5xl mb-4 opacity-40">&#x1F0CF;</div>
             <p className="text-gray-400 font-semibold">No cards found for "{debouncedQuery}"</p>
             <p className="text-gray-600 text-sm mt-1">Try a different name</p>
           </motion.div>

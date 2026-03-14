@@ -192,18 +192,22 @@ export const pokemonTCGService = {
 
     const from = (page - 1) * pageSize;
 
-    // Use the fuzzy search RPC for trigram-based matching
+    // Fetch one extra row to detect if there are more results
     const { data, error } = await supabase
       .rpc('search_cards_fuzzy', {
         query,
-        result_limit: pageSize,
+        result_limit: pageSize + 1,
         result_offset: from,
       });
 
     if (error) throw error;
 
+    const rows = data ?? [];
+    const hasMore = rows.length > pageSize;
+    const trimmed = hasMore ? rows.slice(0, pageSize) : rows;
+
     // search_cards_fuzzy returns flat rows — map to PokemonCard shape
-    const cards: PokemonCard[] = (data ?? []).map((row) => ({
+    const cards: PokemonCard[] = trimmed.map((row) => ({
       id: row.id,
       name: row.name,
       number: row.number,
@@ -217,8 +221,8 @@ export const pokemonTCGService = {
       images: { small: row.image_small, large: row.image_large },
     }));
 
-    // We don't have an exact total from the RPC — estimate
-    const totalCount = cards.length < pageSize ? from + cards.length : from + cards.length + 1;
+    // totalCount: -1 signals "unknown, but there are more pages"
+    const totalCount = hasMore ? -1 : from + cards.length;
 
     return { data: cards, totalCount, page, pageSize, count: cards.length };
   },
@@ -291,6 +295,51 @@ export function getRarityColor(rarity?: string): string {
   if (r.includes(' rare')) return '#60a5fa';
   if (r.includes('uncommon')) return '#10b981';
   return '#9ca3af';
+}
+
+/**
+ * Determine which print variants exist for a card.
+ * Uses tcgplayer price keys when available, otherwise heuristic from rarity.
+ */
+export function getAvailableVariants(card: PokemonCard): import('../types').CardVariant[] {
+  // 1. If tcgplayer price data exists, derive from its keys (most accurate)
+  const prices = card.tcgplayer?.prices;
+  if (prices) {
+    const v: import('../types').CardVariant[] = [];
+    if (prices.normal) v.push('normal');
+    if (prices.holofoil) v.push('holofoil');
+    if (prices.reverseHolofoil) v.push('reverseHolofoil');
+    if (prices['1stEditionHolofoil']) v.push('firstEdition');
+    return v.length > 0 ? v : ['normal'];
+  }
+
+  // 2. Heuristic based on rarity
+  const r = (card.rarity ?? '').toLowerCase();
+  const supertype = (card.supertype ?? '').toLowerCase();
+
+  // Energy / Trainer basics: normal only
+  if (supertype === 'energy') return ['normal'];
+
+  // Special rarities — one-of-a-kind prints, no normal/reverse
+  const isUltra =
+    r.includes('ultra') || r.includes('secret') || r.includes('rainbow') ||
+    r.includes('hyper') || r.includes('gold') || r.includes('full art') ||
+    r.includes('illustration') || r.includes('special art') ||
+    r.includes('art rare') || r.includes('sar') || r.includes('sir');
+  if (isUltra) return ['holofoil'];
+
+  // Holo rares: holofoil + reverse holo (no non-holo normal)
+  const isHolo =
+    r.includes('rare holo') || r === 'holo rare' ||
+    r.includes('vmax') || r.includes('vstar') || r.includes('v ') || r === 'v' ||
+    r.includes(' ex') || r === 'ex' || r.includes(' gx') || r === 'gx';
+  if (isHolo) return ['holofoil', 'reverseHolofoil'];
+
+  // Rare (non-holo): normal + reverse holo
+  if (r.includes('rare')) return ['normal', 'reverseHolofoil'];
+
+  // Common / Uncommon: normal + reverse holo
+  return ['normal', 'reverseHolofoil'];
 }
 
 export function getTypeGradient(types?: string[]): string {
