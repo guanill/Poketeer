@@ -156,9 +156,9 @@ def seed_embeddings():
     n, dim = features.shape
     print(f"  Loaded {n} embeddings ({dim}-D)")
 
-    # The DB column is vector(576) to match the on-device ONNX model.
+    # The DB column is vector(512) to match the CardEmbedder model.
     # If the local index uses a different dimension, skip seeding.
-    EXPECTED_DIM = 576
+    EXPECTED_DIM = 512
     if dim != EXPECTED_DIM:
         print(f"  SKIP: index is {dim}-D but DB expects {EXPECTED_DIM}-D")
         print(f"  Re-export with: python -m backend.training.export_mobile_onnx")
