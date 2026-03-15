@@ -135,7 +135,7 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
       </div>
 
       {/* Card Info */}
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-10 sm:pb-2">
         <p className="text-xs font-bold text-white truncate text-center leading-tight">{card.name}</p>
         <div className="flex items-center justify-center gap-1 mt-0.5">
           <span className="text-xs" style={{ color: rarityColor }}>
