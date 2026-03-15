@@ -340,7 +340,7 @@ function JobCard({
 // Main component
 // ---------------------------------------------------------------------------
 
-type UIMode = 'idle' | 'camera' | 'error';
+type UIMode = 'idle' | 'error';
 
 export function CardScanner() {
   const uid = useId();
@@ -353,10 +353,8 @@ export function CardScanner() {
   const [serverUrl, setServerUrl] = useState(() => getBackendUrl() ?? '');
   const [serverConnected, setServerConnected] = useState<boolean | null>(null);
 
-  const videoRef    = useRef<HTMLVideoElement>(null);
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
   const inlineStreamRef = useRef<MediaStream | null>(null);
-  const streamRef   = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jobSeqRef   = useRef(0);
 
@@ -418,29 +416,6 @@ export function CardScanner() {
     }
   }, [serverUrl]);
 
-  useEffect(() => {
-    if (mode === 'camera' && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
-  }, [mode]);
-
-  const stopCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-  }, []);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: { ideal: 'environment' } },
-      });
-      streamRef.current = stream;
-      setMode('camera');
-    } catch {
-      setErrorMsg('Camera access denied or no camera found. Use the upload option instead.');
-      setMode('error');
-    }
-  }, []);
 
   const queueScan = useCallback(async (blob: Blob, previewUrl: string) => {
     const id = `${uid}-${++jobSeqRef.current}`;
@@ -463,23 +438,6 @@ export function CardScanner() {
       ));
     }
   }, [uid]);
-
-  const captureFrame = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    setShotFlash(true);
-    setTimeout(() => setShotFlash(false), 180);
-
-    const canvas = document.createElement('canvas');
-    canvas.width  = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')!.drawImage(video, 0, 0);
-    canvas.toBlob(blob => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      queueScan(blob, url);
-    }, 'image/jpeg', 0.92);
-  }, [queueScan]);
 
   const captureInlineFrame = useCallback(() => {
     const video = inlineVideoRef.current;
@@ -526,15 +484,9 @@ export function CardScanner() {
   const clearDone  = () =>
     setJobs(prev => prev.filter(j => j.status === 'scanning'));
 
-  const closeCameraAndGoIdle = useCallback(() => {
-    stopCamera();
-    setMode('idle');
-  }, [stopCamera]);
-
   useEffect(() => () => {
-    stopCamera();
     inlineStreamRef.current?.getTracks().forEach(t => t.stop());
-  }, [stopCamera]);
+  }, []);
 
   const scanningCount = jobs.filter(j => j.status === 'scanning').length;
   const doneCount     = jobs.filter(j => j.status === 'done').length;
@@ -567,170 +519,6 @@ export function CardScanner() {
 
   return (
     <>
-      {/* ============================================================== */}
-      {/* FULLSCREEN CAMERA OVERLAY                                       */}
-      {/* ============================================================== */}
-      <AnimatePresence>
-        {mode === 'camera' && (
-          <motion.div
-            key="camera-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black flex flex-col"
-          >
-            {/* Video fills the screen */}
-            <div className="relative flex-1 overflow-hidden">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-
-              {/* Card outline guide — large, centered, card-shaped (2.5:3.5 ratio) */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div
-                  className="relative rounded-2xl border-2 border-amber-400/80"
-                  style={{
-                    width: 'min(72vw, 320px)',
-                    aspectRatio: '2.5 / 3.5',
-                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.5), inset 0 0 40px rgba(245,158,11,0.08)',
-                  }}
-                >
-                  {/* Corner accents */}
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-amber-400 rounded-tl-2xl" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-amber-400 rounded-tr-2xl" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-amber-400 rounded-bl-2xl" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-amber-400 rounded-br-2xl" />
-
-                  {/* Scanning sweep line */}
-                  <motion.div
-                    className="absolute inset-x-2 h-0.5 rounded-full"
-                    style={{ background: 'linear-gradient(90deg, transparent, #F59E0B, transparent)' }}
-                    animate={{ top: ['5%', '92%', '5%'] }}
-                    transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
-                  />
-                </div>
-              </div>
-
-              {/* Hint text */}
-              <div className="absolute top-0 inset-x-0 pt-14 flex justify-center pointer-events-none">
-                <span className="text-white/60 text-xs font-semibold bg-black/40 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                  Align card within the frame
-                </span>
-              </div>
-
-              {/* Shot flash */}
-              <AnimatePresence>
-                {shotFlash && (
-                  <motion.div
-                    key="flash"
-                    initial={{ opacity: 0.8 }}
-                    animate={{ opacity: 0 }}
-                    transition={{ duration: 0.18 }}
-                    className="absolute inset-0 bg-white pointer-events-none"
-                  />
-                )}
-              </AnimatePresence>
-
-              {/* Scanning count badge — top right */}
-              {scanningCount > 0 && (
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  className="absolute top-14 right-4 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full"
-                >
-                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
-                    <Loader2 size={12} className="text-amber-400" />
-                  </motion.div>
-                  <span className="text-xs text-amber-400 font-bold">{scanningCount} scanning</span>
-                </motion.div>
-              )}
-            </div>
-
-            {/* Bottom controls bar */}
-            <div
-              className="shrink-0 flex items-center justify-between px-6 py-5"
-              style={{
-                background: 'linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.7))',
-                paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)',
-              }}
-            >
-              {/* Close */}
-              <button
-                onClick={closeCameraAndGoIdle}
-                className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
-              >
-                <X size={22} />
-              </button>
-
-              {/* Shutter */}
-              <motion.button
-                whileTap={{ scale: 0.85 }}
-                onClick={captureFrame}
-                className="w-18 h-18 rounded-full flex items-center justify-center"
-                style={{
-                  background: 'linear-gradient(135deg, #F59E0B, #d97706)',
-                  boxShadow: '0 0 30px rgba(245,158,11,0.4), inset 0 2px 0 rgba(255,255,255,0.2)',
-                }}
-              >
-                <div className="w-14 h-14 rounded-full border-2 border-black/20 flex items-center justify-center">
-                  <Camera size={24} className="text-black" />
-                </div>
-              </motion.button>
-
-              {/* Upload from gallery */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
-              >
-                <Upload size={20} />
-              </button>
-            </div>
-
-            {/* Latest result toast (slides up from bottom when a scan finishes while camera is open) */}
-            <AnimatePresence>
-              {jobs.length > 0 && jobs[0].status === 'done' && jobs[0].matches.length > 0 && (
-                <motion.div
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: 100, opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                  className="absolute bottom-28 left-4 right-4 z-10"
-                  style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-                >
-                  <div
-                    className="flex items-center gap-3 p-3 rounded-xl backdrop-blur-md"
-                    style={{ background: 'rgba(26,26,46,0.92)', border: '1px solid rgba(245,158,11,0.25)' }}
-                  >
-                    <img
-                      src={jobs[0].matches[0].image_small}
-                      alt=""
-                      className="w-10 h-14 object-cover rounded-lg shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-white truncate">{jobs[0].matches[0].name}</p>
-                      <p className="text-[10px] text-emerald-400 font-bold">
-                        {Math.round(jobs[0].matches[0].confidence * 100)}% match
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => { addCardFromMatch(jobs[0].matches[0]); }}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-400/15 text-amber-400 text-xs font-bold border border-amber-400/25 hover:bg-amber-400/25 transition-colors"
-                    >
-                      <Plus size={12} className="inline mr-1" />
-                      Add
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ============================================================== */}
       {/* INLINE CONTENT (idle / error / scan queue)                      */}
       {/* ============================================================== */}
@@ -997,9 +785,4 @@ export function CardScanner() {
       </div>
     </>
   );
-}
-
-// Helper used in the camera toast
-function addCardFromMatch(match: ScanMatch) {
-  useCollectionStore.getState().addCard(match.id);
 }
