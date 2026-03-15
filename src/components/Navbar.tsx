@@ -73,9 +73,9 @@ const navItems = [
 ];
 
 function UserMenu() {
-  const { user, signInWithGoogle, signInWithEmail, signUp, signOut, loading } = useAuth();
+  const { user, signInWithGoogle, signInWithEmail, signUp, signOut, resetPassword, loading } = useAuth();
   const [open, setOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'pick' | 'email'>('pick');
+  const [authMode, setAuthMode] = useState<'pick' | 'email' | 'forgot'>('pick');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -148,7 +148,52 @@ function UserMenu() {
                 boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
               }}
             >
-              {authMode === 'pick' ? (
+              {authMode === 'forgot' ? (
+                <div className="p-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode('email'); setError(''); }}
+                    className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    &larr; Back
+                  </button>
+                  <p className="text-xs font-bold text-white">Reset password</p>
+                  <p className="text-[10px] text-gray-400">Enter your email and we'll send you a reset link.</p>
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 outline-none focus:border-violet-500/50"
+                  />
+                  {error && (
+                    <p className={`text-[10px] ${error.includes('Check your email') ? 'text-emerald-400' : 'text-red-400'}`}>{error}</p>
+                  )}
+                  <button
+                    onClick={async () => {
+                      if (!email) { setError('Please enter your email'); return; }
+                      setSubmitting(true);
+                      setError('');
+                      try {
+                        await resetPassword(email);
+                        setError('Check your email for a reset link!');
+                      } catch (err: unknown) {
+                        setError(err instanceof Error ? err.message : 'Failed to send reset email');
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
+                    disabled={submitting}
+                    className="w-full py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
+                    style={{
+                      background: 'linear-gradient(135deg, #F59E0B, #d97706)',
+                      color: '#000',
+                    }}
+                  >
+                    {submitting ? '...' : 'Send Reset Link'}
+                  </button>
+                </div>
+              ) : authMode === 'pick' ? (
                 <div className="p-3 space-y-2">
                   <p className="text-xs font-bold text-white text-center mb-3">Sign in to sync your collection</p>
                   <button
@@ -212,6 +257,15 @@ function UserMenu() {
                   >
                     {submitting ? '...' : isSignUp ? 'Create Account' : 'Sign In'}
                   </button>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode('forgot'); setError(''); }}
+                      className="w-full text-[10px] text-gray-500 hover:text-gray-300 transition-colors py-0.5"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
