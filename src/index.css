@@ -2,12 +2,14 @@
 
 @layer base {
   * { box-sizing: border-box; }
+  html {
+    background-color: #07070f;
+  }
   body {
     background-color: #07070f;
     color: #e8e8f0;
     font-family: 'Nunito', system-ui, sans-serif;
     font-weight: 600;
-    min-height: 100vh;
     background-image:
       radial-gradient(ellipse at 15% 85%, rgba(59,130,246,0.10) 0%, transparent 55%),
       radial-gradient(ellipse at 85% 15%, rgba(245,158,11,0.06) 0%, transparent 55%),
