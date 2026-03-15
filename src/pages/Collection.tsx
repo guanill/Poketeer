@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame } from 'lucide-react';
-import { pokemonTCGService, getCardMarketPrice } from '../services/pokemonTCG';
+import { pokemonTCGService } from '../services/pokemonTCG';
 import { useCollectionStore } from '../store/collectionStore';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';

@@ -67,6 +67,9 @@ export function SetDetail() {
     staleTime: 1000 * 60 * 60,
   });
 
+  // When filter/sort is active, work from the full card list; otherwise use current page
+  const needsAllCards = filterOwned !== 'all' || hasActiveFilters;
+
   const isLoading = needsAllCards ? loadingAll : loadingPage;
   const totalCards = cardsData?.totalCount ?? 0;
 
@@ -76,9 +79,6 @@ export function SetDetail() {
   }, [owned, set]);
 
   const progress = set ? Math.round((ownedInSet / set.total) * 100) : 0;
-
-  // When filter/sort is active, work from the full card list; otherwise use current page
-  const needsAllCards = filterOwned !== 'all' || hasActiveFilters;
   const sourceCards = needsAllCards
     ? (allCardsData?.data ?? [])
     : (cardsData?.data ?? []);
