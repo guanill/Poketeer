@@ -354,9 +354,16 @@ export function CardScanner() {
   const [serverConnected, setServerConnected] = useState<boolean | null>(null);
 
   const videoRef    = useRef<HTMLVideoElement>(null);
+  const inlineVideoRef = useRef<HTMLVideoElement>(null);
+  const inlineStreamRef = useRef<MediaStream | null>(null);
   const streamRef   = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jobSeqRef   = useRef(0);
+
+  const [isMobile] = useState(() =>
+    typeof window !== 'undefined' &&
+    ('ontouchstart' in window || window.innerWidth < 640)
+  );
 
   useEffect(() => {
     cardScanService.checkHealth().then(setBackendOk);
@@ -366,6 +373,27 @@ export function CardScanner() {
       typeof navigator.mediaDevices.getUserMedia === 'function';
     setCameraSupported(supported);
   }, []);
+
+  // Auto-start inline camera on mobile
+  useEffect(() => {
+    if (!isMobile || !cameraSupported) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: { ideal: 'environment' } },
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        inlineStreamRef.current = stream;
+        if (inlineVideoRef.current) inlineVideoRef.current.srcObject = stream;
+      } catch { /* camera denied — upload fallback visible */ }
+    })();
+    return () => {
+      cancelled = true;
+      inlineStreamRef.current?.getTracks().forEach(t => t.stop());
+      inlineStreamRef.current = null;
+    };
+  }, [isMobile, cameraSupported]);
 
   const connectToServer = useCallback(async () => {
     const url = serverUrl.trim().replace(/\/+$/, '');
@@ -453,6 +481,23 @@ export function CardScanner() {
     }, 'image/jpeg', 0.92);
   }, [queueScan]);
 
+  const captureInlineFrame = useCallback(() => {
+    const video = inlineVideoRef.current;
+    if (!video) return;
+    setShotFlash(true);
+    setTimeout(() => setShotFlash(false), 180);
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')!.drawImage(video, 0, 0);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      queueScan(blob, url);
+    }, 'image/jpeg', 0.92);
+  }, [queueScan]);
+
   const loadFiles = useCallback((files: FileList | File[]) => {
     Array.from(files).forEach(file => {
       if (!file.type.startsWith('image/')) return;
@@ -486,7 +531,10 @@ export function CardScanner() {
     setMode('idle');
   }, [stopCamera]);
 
-  useEffect(() => () => { stopCamera(); }, [stopCamera]);
+  useEffect(() => () => {
+    stopCamera();
+    inlineStreamRef.current?.getTracks().forEach(t => t.stop());
+  }, [stopCamera]);
 
   const scanningCount = jobs.filter(j => j.status === 'scanning').length;
   const doneCount     = jobs.filter(j => j.status === 'done').length;
@@ -738,73 +786,118 @@ export function CardScanner() {
           </div>
         )}
 
-        {/* IDLE — Camera + Upload buttons */}
-        {mode === 'idle' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-            {/* Two big action cards side by side */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Camera button */}
-              {cameraSupported !== false ? (
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={startCamera}
-                  className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-amber-400/20 transition-all group"
-                  style={{
-                    background: 'linear-gradient(160deg, rgba(245,158,11,0.08) 0%, rgba(245,158,11,0.02) 100%)',
-                  }}
-                >
-                  <div className="w-14 h-14 rounded-full bg-amber-400/15 border border-amber-400/25 flex items-center justify-center group-hover:scale-110 group-hover:bg-amber-400/25 transition-all">
-                    <Camera size={26} className="text-amber-400" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-bold text-white text-sm">Camera</p>
-                    <p className="text-[10px] text-gray-500 mt-0.5">Take a photo</p>
-                  </div>
-                </motion.button>
-              ) : (
-                <div className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-white/8 bg-white/2">
-                  <div className="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center">
-                    <Camera size={26} className="text-gray-600" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-bold text-gray-500 text-sm">Camera</p>
-                    <p className="text-[10px] text-gray-600 mt-0.5">HTTPS required</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Upload button */}
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => fileInputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-3 py-10 rounded-2xl border border-violet-500/20 transition-all group"
-                style={{
-                  background: 'linear-gradient(160deg, rgba(139,92,246,0.08) 0%, rgba(139,92,246,0.02) 100%)',
-                }}
+        {/* ---- MOBILE: inline camera feed always visible ---- */}
+        {isMobile && mode !== 'error' && (
+          <div className="space-y-3">
+            {cameraSupported !== false ? (
+              <div className="relative rounded-2xl overflow-hidden border border-amber-400/20"
+                style={{ background: '#000' }}
               >
-                <div className="w-14 h-14 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center group-hover:scale-110 group-hover:bg-violet-500/25 transition-all">
-                  <Upload size={24} className="text-violet-400" />
-                </div>
-                <div className="text-center">
-                  <p className="font-bold text-white text-sm">Upload</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">From gallery</p>
-                </div>
-              </motion.button>
-            </div>
+                <video
+                  ref={inlineVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full aspect-3/4 object-cover"
+                />
 
-            {/* Drop zone */}
+                {/* Card outline guide */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div
+                    className="relative rounded-xl border-2 border-amber-400/60"
+                    style={{
+                      width: '65%',
+                      aspectRatio: '2.5 / 3.5',
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
+                    }}
+                  >
+                    <div className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-amber-400 rounded-tl-xl" />
+                    <div className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-amber-400 rounded-tr-xl" />
+                    <div className="absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 border-amber-400 rounded-bl-xl" />
+                    <div className="absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 border-amber-400 rounded-br-xl" />
+                    <motion.div
+                      className="absolute inset-x-2 h-0.5 rounded-full"
+                      style={{ background: 'linear-gradient(90deg, transparent, #F59E0B, transparent)' }}
+                      animate={{ top: ['5%', '92%', '5%'] }}
+                      transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Shot flash */}
+                <AnimatePresence>
+                  {shotFlash && (
+                    <motion.div
+                      key="flash"
+                      initial={{ opacity: 0.8 }}
+                      animate={{ opacity: 0 }}
+                      transition={{ duration: 0.18 }}
+                      className="absolute inset-0 bg-white pointer-events-none"
+                    />
+                  )}
+                </AnimatePresence>
+
+                {/* Capture button */}
+                <div className="absolute bottom-4 inset-x-0 flex justify-center">
+                  <motion.button
+                    whileTap={{ scale: 0.85 }}
+                    onClick={captureInlineFrame}
+                    className="w-16 h-16 rounded-full flex items-center justify-center"
+                    style={{
+                      background: 'linear-gradient(135deg, #F59E0B, #d97706)',
+                      boxShadow: '0 0 24px rgba(245,158,11,0.4), inset 0 2px 0 rgba(255,255,255,0.2)',
+                    }}
+                  >
+                    <div className="w-12 h-12 rounded-full border-2 border-black/20 flex items-center justify-center">
+                      <Camera size={22} className="text-black" />
+                    </div>
+                  </motion.button>
+                </div>
+
+                {/* Scanning badge */}
+                {scanningCount > 0 && (
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-full">
+                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
+                      <Loader2 size={11} className="text-amber-400" />
+                    </motion.div>
+                    <span className="text-[10px] text-amber-400 font-bold">{scanningCount}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="w-full flex flex-col items-center justify-center gap-3 py-14 rounded-2xl border border-white/8 bg-white/2">
+                <Camera size={30} className="text-gray-600" />
+                <p className="text-xs text-gray-600">Camera unavailable — use upload below</p>
+              </div>
+            )}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-white/8 text-gray-400 hover:text-white hover:border-white/15 transition-colors"
+            >
+              <Upload size={14} />
+              <span className="text-xs font-medium">Upload from gallery</span>
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
+          </div>
+        )}
+
+        {/* ---- DESKTOP: upload + drag/drop only ---- */}
+        {!isMobile && mode === 'idle' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
             <div
               onDrop={handleDrop}
               onDragOver={e => e.preventDefault()}
-              className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-white/10 hover:border-amber-400/30 hover:bg-amber-400/2 transition-all cursor-pointer text-gray-500 hover:text-gray-300"
               onClick={() => fileInputRef.current?.click()}
+              className="flex flex-col items-center justify-center gap-4 py-16 rounded-2xl border-2 border-dashed border-white/10 hover:border-violet-500/30 hover:bg-violet-500/3 transition-all cursor-pointer group"
             >
-              <Upload size={14} />
-              <span className="text-xs font-medium">or drag & drop images here</span>
+              <div className="w-14 h-14 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center group-hover:scale-110 group-hover:bg-violet-500/25 transition-all">
+                <Upload size={24} className="text-violet-400" />
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-white text-sm">Drop card images here</p>
+                <p className="text-xs text-gray-500 mt-1">or click to browse from your files</p>
+              </div>
             </div>
-
             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
           </motion.div>
         )}

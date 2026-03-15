@@ -97,9 +97,10 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
           </button>
 
           <div className="p-5">
-            <div className="flex gap-5">
+            {/* Top section — stacks on mobile, side-by-side on desktop */}
+            <div className="flex flex-col sm:flex-row gap-5">
               {/* Card Image */}
-              <div className="shrink-0">
+              <div className="shrink-0 flex justify-center sm:block">
                 <motion.div
                   whileHover={{ scale: 1.05, rotateY: 5 }}
                   transition={{ type: 'spring', stiffness: 200 }}
@@ -109,12 +110,12 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                     <img
                       src={card.images.large || card.images.small}
                       alt={card.name}
-                      className="w-40 rounded-xl shadow-2xl"
+                      className="w-36 sm:w-40 rounded-xl shadow-2xl"
                       style={{ boxShadow: `0 20px 40px ${rarityColor}40` }}
                     />
                   ) : (
                     <div
-                      className="w-40 rounded-xl flex flex-col items-center justify-center gap-2"
+                      className="w-36 sm:w-40 rounded-xl flex flex-col items-center justify-center gap-2"
                       style={{
                         height: '220px',
                         background: 'linear-gradient(145deg, #1a1a3e, #0f0f2a)',
@@ -140,18 +141,16 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
 
               {/* Card Info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h2 className="text-xl font-black text-white leading-tight">{card.name}</h2>
-                    <p className="text-sm mt-1" style={{ color: rarityColor }}>{card.rarity ?? 'Common'}</p>
-                  </div>
-                  <div className="text-right shrink-0 mr-10">
-                    <p className="text-xs text-gray-500">#{card.number}</p>
-                    <p className="text-xs text-gray-500">{card.set.name}</p>
+                <div>
+                  <h2 className="text-xl font-black text-white leading-tight">{card.name}</h2>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="text-sm font-semibold" style={{ color: rarityColor }}>{card.rarity ?? 'Common'}</span>
+                    <span className="text-xs text-gray-600">·</span>
+                    <span className="text-xs text-gray-500">{card.set.name} #{card.number}</span>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 mt-3">
+                <div className="flex flex-wrap gap-1.5 mt-3">
                   {card.types?.map(type => (
                     <span
                       key={type}
@@ -177,45 +176,50 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                 )}
 
                 {/* Market Price */}
-                <div className="mt-3 p-3 rounded-xl bg-white/3 border border-white/8">
-                  <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
-                    <DollarSign size={11} /> Market Price (TCGPlayer)
-                  </p>
+                <div className="mt-3 p-3 rounded-xl border border-white/8" style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))' }}>
                   {marketPrice ? (
-                    <p className="text-2xl font-black text-green-400">${marketPrice.toFixed(2)}</p>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Market Price</p>
+                        <p className="text-2xl font-black text-green-400 mt-0.5">${marketPrice.toFixed(2)}</p>
+                      </div>
+                      <div className="w-9 h-9 rounded-xl bg-green-500/15 flex items-center justify-center">
+                        <DollarSign size={18} className="text-green-400" />
+                      </div>
+                    </div>
                   ) : (
                     <div className="space-y-2">
-                      <p className="text-xs text-gray-600 italic">Price unavailable from API</p>
+                      <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Market Price</p>
+                      <p className="text-xs text-gray-600 italic">No price data available</p>
                       <div className="flex gap-2 min-w-0">
                         <input
                           type="number"
                           step="0.01"
                           min="0"
-                          placeholder="Enter price manually…"
+                          placeholder="Set price manually..."
                           value={manualPriceInput}
                           onChange={e => setManualPriceInput(e.target.value)}
-                          className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-amber-400/50"
+                          className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-green-400/50"
                         />
                         <button
                           onClick={handleSaveManualPrice}
                           disabled={!manualPriceInput || isNaN(parseFloat(manualPriceInput))}
-                          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-400/20 text-amber-400 hover:bg-amber-400/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                           Save
                         </button>
                       </div>
                     </div>
                   )}
-                  {/* Variant breakdown if available from remote card data */}
                   {priceVariants.length > 0 && (
-                    <div className="mt-2 grid grid-cols-1 gap-1">
-                      {priceVariants.slice(0, 3).map(({ variant, market, low, high }) => (
-                        <div key={variant} className="flex items-center justify-between bg-white/3 rounded-lg px-3 py-1.5">
-                          <span className="text-xs text-gray-400 capitalize">{variant.replace(/([A-Z])/g, ' $1')}</span>
-                          <div className="flex gap-3 text-xs">
-                            {low && <span className="text-gray-500">L: ${low.toFixed(2)}</span>}
-                            {market && <span className="text-green-400 font-semibold">${market.toFixed(2)}</span>}
-                            {high && <span className="text-gray-500">H: ${high.toFixed(2)}</span>}
+                    <div className="mt-2.5 space-y-1">
+                      {priceVariants.map(({ variant, market, low, high }) => (
+                        <div key={variant} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 bg-black/20">
+                          <span className="text-[11px] text-gray-400 capitalize font-medium">{variant.replace(/([A-Z])/g, ' $1')}</span>
+                          <div className="flex items-center gap-2.5 text-[11px]">
+                            {low != null && <span className="text-gray-600">${low.toFixed(2)}</span>}
+                            {market != null && <span className="text-green-400 font-bold">${market.toFixed(2)}</span>}
+                            {high != null && <span className="text-gray-600">${high.toFixed(2)}</span>}
                           </div>
                         </div>
                       ))}

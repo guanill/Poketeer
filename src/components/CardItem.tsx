@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
-import { Plus, Minus, Heart, DollarSign, Eye } from 'lucide-react';
+import { Plus, Minus, Heart, DollarSign } from 'lucide-react';
 import type { PokemonCard, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
 import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
@@ -221,14 +221,6 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
           title={inWishlist ? 'Remove from wishlist' : 'Add to wishlist'}
         >
           {inWishlist ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />}
-        </motion.button>
-        <motion.button
-          whileTap={{ scale: 0.85 }}
-          onClick={(e) => { e.stopPropagation(); onViewDetails?.(card); }}
-          className="p-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/40 text-blue-400 transition-colors"
-          title="View details"
-        >
-          <Eye size={12} />
         </motion.button>
       </div>
     </motion.div>
