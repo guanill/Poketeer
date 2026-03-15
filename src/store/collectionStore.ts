@@ -49,7 +49,7 @@ async function _getUser(): Promise<string | null> {
 }
 
 async function _upsertCollection(userId: string, cardId: string, card: OwnedCard) {
-  await supabase.from('collections').upsert({
+  const { error } = await supabase.from('collections').upsert({
     user_id: userId,
     card_id: cardId,
     quantity: card.quantity,
@@ -59,24 +59,28 @@ async function _upsertCollection(userId: string, cardId: string, card: OwnedCard
     date_added: card.dateAdded,
     variants: card.variants ?? [],
   });
+  if (error) console.error('[sync] upsert collection failed:', error.message, error.details);
 }
 
 async function _deleteCollection(userId: string, cardId: string) {
-  await supabase.from('collections').delete().eq('user_id', userId).eq('card_id', cardId);
+  const { error } = await supabase.from('collections').delete().eq('user_id', userId).eq('card_id', cardId);
+  if (error) console.error('[sync] delete collection failed:', error.message);
 }
 
 async function _upsertWishlist(userId: string, item: WishlistItem) {
-  await supabase.from('wishlist').upsert({
+  const { error } = await supabase.from('wishlist').upsert({
     user_id: userId,
     card_id: item.cardId,
     target_price: item.targetPrice ?? null,
     priority: item.priority,
     date_added: item.dateAdded,
   });
+  if (error) console.error('[sync] upsert wishlist failed:', error.message, error.details);
 }
 
 async function _deleteWishlist(userId: string, cardId: string) {
-  await supabase.from('wishlist').delete().eq('user_id', userId).eq('card_id', cardId);
+  const { error } = await supabase.from('wishlist').delete().eq('user_id', userId).eq('card_id', cardId);
+  if (error) console.error('[sync] delete wishlist failed:', error.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +202,9 @@ export const useCollectionStore = create<CollectionStore>()(
           supabase.from('collections').select('*').eq('user_id', userId),
           supabase.from('wishlist').select('*').eq('user_id', userId),
         ]);
+        if (colRes.error) console.error('[sync] fetch collections failed:', colRes.error.message);
+        if (wlRes.error) console.error('[sync] fetch wishlist failed:', wlRes.error.message);
+        console.log(`[sync] pulled ${colRes.data?.length ?? 0} cards, ${wlRes.data?.length ?? 0} wishlist from Supabase`);
 
         const owned: Record<string, OwnedCard> = {};
         for (const row of colRes.data ?? []) {
