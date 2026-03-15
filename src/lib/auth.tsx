@@ -20,11 +20,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
+    // If we're in a popup after OAuth redirect, close it once session is captured
+    const isPopup = window.opener && window.opener !== window;
+
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
+      if (isPopup && s) {
+        window.close();
+      }
     });
 
     // Listen for auth changes
@@ -32,6 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       (_event, s) => {
         setSession(s);
         setUser(s?.user ?? null);
+        if (isPopup && s) {
+          window.close();
+        }
       },
     );
 
