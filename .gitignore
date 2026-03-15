@@ -82,3 +82,5 @@ backend/yolov8n.pt
 *.sln
 *.sw?
 Thumbs.db
+dinov2_projection.pt
+_test_card.png

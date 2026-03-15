@@ -1,73 +1,46 @@
 """
 Poketeer Card Embedder API — Hugging Face Spaces
 
-Receives a Pokemon card image, returns a 512-D embedding vector.
+Receives a Pokemon card image, returns a 512-D embedding vector
+using DINOv2 ViT-B/14 + learned projection.
 The client sends this embedding to Supabase pgvector for matching.
 """
 
 import io
-import json
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
-import torchvision.transforms as transforms
+from torchvision import transforms
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 # ---------------------------------------------------------------------------
-# Model (same architecture as backend/model.py)
+# DINOv2 backbone + projection
 # ---------------------------------------------------------------------------
 
-class CardEmbedder(nn.Module):
-    def __init__(self, embed_dim: int = 512, freeze_backbone_layers: int = 6):
-        super().__init__()
-        weights = models.ResNet50_Weights.DEFAULT
-        backbone = models.resnet50(weights=weights)
-        children = list(backbone.children())
-        for i, child in enumerate(children[:freeze_backbone_layers]):
-            for param in child.parameters():
-                param.requires_grad = False
-        self.backbone = nn.Sequential(*children[:-1])
-        self.flatten = nn.Flatten()
-        self.projector = nn.Sequential(
-            nn.Linear(2048, 1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(1024, embed_dim),
-        )
+dinov2 = torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14")
+dinov2.eval()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = self.backbone(x)
-        features = self.flatten(features)
-        embeddings = self.projector(features)
-        return F.normalize(embeddings, p=2, dim=1)
+projection = nn.Linear(768, 512, bias=False)
+proj_state = torch.load("dinov2_projection.pt", map_location="cpu", weights_only=True)
+projection.load_state_dict(proj_state)
+projection.eval()
+
+print("[poketeer] DINOv2 ViT-B/14 + projection loaded (768→512-D)")
 
 # ---------------------------------------------------------------------------
-# Preprocessing
+# Preprocessing (must match Colab training)
 # ---------------------------------------------------------------------------
-
-INPUT_SIZE = 224
 
 transform = transforms.Compose([
-    transforms.Resize((INPUT_SIZE, INPUT_SIZE)),
+    transforms.Resize(252, interpolation=transforms.InterpolationMode.BICUBIC),
+    transforms.CenterCrop(224),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                          std=[0.229, 0.224, 0.225]),
 ])
-
-# ---------------------------------------------------------------------------
-# Load model
-# ---------------------------------------------------------------------------
-
-model = CardEmbedder(embed_dim=512)
-state = torch.load("card_classifier.pt", map_location="cpu", weights_only=True)
-model.load_state_dict(state)
-model.eval()
-print("[poketeer] CardEmbedder loaded (512-D)")
 
 # ---------------------------------------------------------------------------
 # API
@@ -84,7 +57,7 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"status": "ok", "model": "CardEmbedder", "dim": 512}
+    return {"status": "ok", "model": "DINOv2-ViT-B/14", "dim": 512}
 
 @app.get("/health")
 def health():
@@ -98,7 +71,9 @@ async def embed(file: UploadFile = File(...)):
     tensor = transform(img).unsqueeze(0)
 
     with torch.inference_mode():
-        features = model(tensor)
+        features = dinov2(tensor)           # (1, 768)
+        emb = projection(features)          # (1, 512)
+        emb = F.normalize(emb, p=2, dim=1)
 
-    embedding = features.squeeze().numpy().tolist()
+    embedding = emb.squeeze().numpy().tolist()
     return {"embedding": embedding, "dim": len(embedding)}
