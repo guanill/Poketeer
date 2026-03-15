@@ -14,6 +14,7 @@
       radial-gradient(ellipse at 15% 85%, rgba(59,130,246,0.10) 0%, transparent 55%),
       radial-gradient(ellipse at 85% 15%, rgba(245,158,11,0.06) 0%, transparent 55%),
       radial-gradient(ellipse at 50% 50%, rgba(139,92,246,0.04) 0%, transparent 70%);
+    background-attachment: fixed;
   }
   ::-webkit-scrollbar { width: 7px; height: 7px; }
   ::-webkit-scrollbar-track { background: #07070f; }
