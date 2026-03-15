@@ -1,7 +1,9 @@
+import { useState, useRef, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { LayoutDashboard, Layers, BookOpen, Heart, Search, ScanLine } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LayoutDashboard, Layers, BookOpen, Heart, Search, ScanLine, LogIn, LogOut, User } from 'lucide-react';
 import { useCollectionStore } from '../store/collectionStore';
+import { useAuth } from '../lib/auth';
 
 function CardIcon({ size = 20 }: { size?: number }) {
   return (
@@ -70,6 +72,89 @@ const navItems = [
   { to: '/scan', icon: ScanLine, label: 'Scan' },
 ];
 
+function UserMenu() {
+  const { user, signInWithGoogle, signOut, loading } = useAuth();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  if (loading) return null;
+
+  if (!user) {
+    return (
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={signInWithGoogle}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+        style={{
+          background: 'rgba(245,158,11,0.12)',
+          border: '1px solid rgba(245,158,11,0.25)',
+          color: '#fcd34d',
+        }}
+      >
+        <LogIn size={13} />
+        <span className="hidden sm:inline">Sign in</span>
+      </motion.button>
+    );
+  }
+
+  const avatar = user.user_metadata?.avatar_url;
+  const name = user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-8 h-8 rounded-full overflow-hidden border-2 border-violet-500/40 hover:border-violet-500/70 transition-colors"
+      >
+        {avatar ? (
+          <img src={avatar} alt={name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full bg-violet-500/20 flex items-center justify-center">
+            <User size={14} className="text-violet-400" />
+          </div>
+        )}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: -4 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 mt-2 w-48 rounded-xl overflow-hidden z-50"
+            style={{
+              background: 'linear-gradient(145deg, #1a1a2e, #13132a)',
+              border: '1px solid rgba(139,92,246,0.2)',
+              boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div className="px-3 py-2.5 border-b border-white/5">
+              <p className="text-xs font-bold text-white truncate">{name}</p>
+              <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
+            </div>
+            <button
+              onClick={() => { signOut(); setOpen(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <LogOut size={13} />
+              Sign out
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function Navbar() {
   const uniqueCards = useCollectionStore(s => s.getUniqueCards());
   const wishlistCount = useCollectionStore(s => s.wishlist.length);
@@ -130,35 +215,39 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Desktop Stats Pills */}
-        <div className="hidden md:flex items-center gap-2">
-          <motion.div
-            whileHover={{ scale: 1.05 }}
-            className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5"
-            style={{
-              background: 'rgba(139,92,246,0.12)',
-              border: '1px solid rgba(139,92,246,0.25)',
-              color: '#c4b5fd',
-            }}
-          >
-            <CardIcon size={14} />
-            {uniqueCards} cards
-          </motion.div>
-          {wishlistCount > 0 && (
+        {/* Right side: stats + auth */}
+        <div className="flex items-center gap-2">
+          {/* Desktop Stats Pills */}
+          <div className="hidden md:flex items-center gap-2">
             <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
               whileHover={{ scale: 1.05 }}
-              className="px-3 py-1.5 rounded-full text-xs font-bold"
+              className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5"
               style={{
-                background: 'rgba(244,63,94,0.15)',
-                border: '1px solid rgba(244,63,94,0.3)',
-                color: '#fb7185',
+                background: 'rgba(139,92,246,0.12)',
+                border: '1px solid rgba(139,92,246,0.25)',
+                color: '#c4b5fd',
               }}
             >
-              ♥ {wishlistCount}
+              <CardIcon size={14} />
+              {uniqueCards} cards
             </motion.div>
-          )}
+            {wishlistCount > 0 && (
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                whileHover={{ scale: 1.05 }}
+                className="px-3 py-1.5 rounded-full text-xs font-bold"
+                style={{
+                  background: 'rgba(244,63,94,0.15)',
+                  border: '1px solid rgba(244,63,94,0.3)',
+                  color: '#fb7185',
+                }}
+              >
+                ♥ {wishlistCount}
+              </motion.div>
+            )}
+          </div>
+          <UserMenu />
         </div>
       </div>
     </nav>
