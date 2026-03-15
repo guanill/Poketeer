@@ -149,39 +149,42 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
           </div>
         )}
         {isOwned && (
-          <>
-            <div className="flex items-center justify-center mt-1">
-              <span className="text-xs px-2 py-0.5 rounded-full font-black"
-                style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.28)' }}
-              >
-                ×{owned.quantity} owned
-              </span>
-            </div>
-            {(() => {
-              const available = getAvailableVariants(card);
-              const ownedVariants = (owned.variants ?? []).filter(v => available.includes(v));
-              if (available.length <= 1 && available[0] === 'normal') return null;
-              if (ownedVariants.length === 0) return null;
-              return (
-                <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
-                  {ownedVariants.map(v => {
-                    const vi = VARIANT_ICONS[v];
-                    return (
-                      <span
-                        key={v}
-                        className="text-[9px] px-1.5 py-0.5 rounded font-black leading-none"
-                        style={{ background: vi.bg, color: vi.color, border: `1px solid ${vi.color}40` }}
-                        title={vi.label}
-                      >
-                        {vi.abbr}
-                      </span>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </>
+          <div className="flex items-center justify-center mt-1">
+            <span className="text-xs px-2 py-0.5 rounded-full font-black"
+              style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.28)' }}
+            >
+              ×{owned.quantity} owned
+            </span>
+          </div>
         )}
+        {(() => {
+          const available = getAvailableVariants(card);
+          if (available.length <= 1 && available[0] === 'normal') return null;
+          const ownedVariants = owned?.variants ?? [];
+          return (
+            <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
+              {available.map(v => {
+                const vi = VARIANT_ICONS[v];
+                const has = ownedVariants.includes(v);
+                return (
+                  <span
+                    key={v}
+                    className="text-[9px] px-1.5 py-0.5 rounded font-black leading-none"
+                    style={{
+                      background: has ? vi.bg : 'rgba(255,255,255,0.05)',
+                      color: has ? vi.color : '#4b5563',
+                      border: `1px solid ${has ? vi.color + '40' : 'rgba(255,255,255,0.08)'}`,
+                      opacity: has ? 1 : 0.6,
+                    }}
+                    title={vi.label}
+                  >
+                    {vi.abbr}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Action Buttons — appear on hover */}

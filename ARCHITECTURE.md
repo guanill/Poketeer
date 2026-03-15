@@ -1,0 +1,214 @@
+# Poketeer — System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              USER DEVICES                                   │
+│                                                                             │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐               │
+│   │  Mobile Web  │     │   Desktop    │     │   Android    │               │
+│   │  (Chrome)    │     │   (Browser)  │     │  (Capacitor) │               │
+│   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘               │
+│          └────────────────────┼────────────────────┘                        │
+│                               │                                             │
+└───────────────────────────────┼─────────────────────────────────────────────┘
+                                │
+                    React SPA (Vite + TypeScript)
+                    Hosted on GitHub Pages
+                                │
+            ┌───────────────────┼───────────────────┐
+            │                   │                   │
+            ▼                   ▼                   ▼
+    ┌───────────────┐  ┌───────────────┐  ┌───────────────────┐
+    │    ZUSTAND     │  │  REACT QUERY  │  │   REACT ROUTER    │
+    │    STORE       │  │    CACHE      │  │   (HashRouter)    │
+    │                │  │               │  │                   │
+    │ • owned cards  │  │ • sets data   │  │ /          Home   │
+    │ • wishlist     │  │ • card pages  │  │ /sets      Sets   │
+    │ • variants     │  │ • prices      │  │ /sets/:id  Detail │
+    │ • custom $     │  │ • search      │  │ /collection       │
+    │                │  │               │  │ /wishlist          │
+    │ Persisted to   │  │ 5min-1hr TTL  │  │ /search           │
+    │ localStorage   │  │               │  │ /scan             │
+    └───────┬───────┘  └───────┬───────┘  └───────────────────┘
+            │                   │
+            │     ┌─────────────┘
+            │     │
+            ▼     ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     SERVICES LAYER                            │
+│                                                              │
+│  pokemonTCG.ts ─── Data fetching (sets, cards, prices)       │
+│  cardScanService.ts ─── Scan orchestration                   │
+│  supabaseScanService.ts ─── Cloud scan pipeline              │
+│  catalogService.ts ─── Offline card catalog (mobile)         │
+│  visualMatchService.ts ─── ONNX inference (mobile)           │
+│  nativeScanService.ts ─── Native OCR pipeline                │
+│                                                              │
+└───────────────┬───────────────┬───────────────┬──────────────┘
+                │               │               │
+                ▼               ▼               ▼
+┌───────────────────┐ ┌─────────────────┐ ┌─────────────────────┐
+│    SUPABASE       │ │   HF SPACE      │ │  LOCAL / MOBILE     │
+│    (Cloud DB)     │ │   (ML Model)    │ │  (Offline)          │
+│                   │ │                 │ │                     │
+│ PostgreSQL +      │ │ DINOv2 ViT-B/14 │ │ • Tesseract.js OCR  │
+│ pgvector          │ │                 │ │ • ONNX MobileNetV3  │
+│                   │ │ POST /embed     │ │ • catalog.json      │
+│ Tables:           │ │ → 512-D vector  │ │ • Fuse.js search    │
+│ ├─ sets           │ │                 │ │                     │
+│ ├─ cards          │ │ POST /health    │ └─────────────────────┘
+│ ├─ card_embeddings│ │ → status check  │
+│ ├─ collections    │ │                 │
+│ ├─ wishlist       │ │ Docker on       │
+│ └─ prices_cache   │ │ HF free tier    │
+│                   │ │ (2 vCPU/16GB)   │
+│ RPC Functions:    │ └────────┬────────┘
+│ ├─ match_card()   │          │
+│ │  (pgvector      │          │
+│ │   cosine search) │         │
+│ └─ search_cards_  │          │
+│    fuzzy()        │          │
+│   (trigram match) │          │
+│                   │          │
+│ Auth:             │          │
+│ ├─ Email/Password │          │
+│ └─ Google OAuth   │          │
+│                   │          │
+│ RLS enforced      │          │
+│ on user tables    │          │
+└───────────────────┘          │
+                               │
+                               │
+═══════════════════════════════════════════════════════════════════
+                    CARD SCANNING PIPELINE
+═══════════════════════════════════════════════════════════════════
+
+    User snaps photo
+         │
+         ▼
+    ┌─────────────┐        ┌──────────────────────────────────┐
+    │ CardScanner │        │  FULLSCREEN CAMERA UI            │
+    │ Component   │───────▶│  • Card guide overlay            │
+    │             │        │  • Shutter + upload buttons       │
+    │             │        │  • In-camera result toast         │
+    └──────┬──────┘        └──────────────────────────────────┘
+           │
+           │ image blob
+           ▼
+    ┌─────────────────┐
+    │ cardScanService │
+    │                 │
+    │ Platform check: │
+    │ Web or Native?  │
+    └────┬───────┬────┘
+         │       │
+    Web  │       │  Native (Android)
+         │       │
+         ▼       ▼
+    ┌─────────┐  ┌──────────────────┐
+    │ CLOUD   │  │ LOCAL PIPELINE   │
+    │ PATH    │  │                  │
+    │         │  │ 1. Crop regions  │
+    │ 1. POST │  │ 2. Tesseract OCR │
+    │ to HF   │  │ 3. Fuzzy match   │
+    │ Space   │  │    via Fuse.js   │
+    │         │  │                  │
+    │ 2. Get  │  │ Optional:        │
+    │ 512-D   │  │ PC backend over  │
+    │ embed   │  │ WiFi for better  │
+    │         │  │ accuracy         │
+    │ 3. Send │  └──────────────────┘
+    │ to      │
+    │ Supabase│
+    │ pgvector│
+    │         │
+    │ 4. Get  │
+    │ top-K   │
+    │ matches │
+    └────┬────┘
+         │
+         │  If cloud fails:
+         │
+         ▼
+    ┌──────────────┐
+    │ OCR FALLBACK │
+    │              │
+    │ Tesseract.js │
+    │ → extract    │
+    │   card name  │
+    │ → fuzzy RPC  │
+    │   search     │
+    └──────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                    DATA SEEDING PIPELINE
+═══════════════════════════════════════════════════════════════════
+
+    ┌──────────────────┐     ┌──────────────────┐
+    │ pokemontcg.io    │     │ tcgdex.net       │
+    │ (EN cards + sets)│     │ (JA/TH cards)    │
+    └────────┬─────────┘     └────────┬─────────┘
+             │                        │
+             ▼                        ▼
+    ┌──────────────────┐     ┌──────────────────┐
+    │ supabase/seed.py │     │ seed_intl_cards  │
+    │                  │     │ .py              │
+    │ • sets.json      │     │                  │
+    │ • card_names.json│     │ • JA/TH sets     │
+    │ • card_index.npz │     │ • JA/TH cards    │
+    │ • prices_cache   │     │ • Logo mapping   │
+    └────────┬─────────┘     └────────┬─────────┘
+             │                        │
+             └────────┬───────────────┘
+                      │
+                      ▼
+             ┌─────────────────┐
+             │ SUPABASE DB     │
+             │                 │
+             │ ~18k EN cards   │
+             │ ~5.5k JA cards  │
+             │ ~2.8k TH cards  │
+             │ ~18k embeddings │
+             └─────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                    EMBEDDING GENERATION (Colab)
+═══════════════════════════════════════════════════════════════════
+
+    ┌──────────────────────────────────────────────┐
+    │           Google Colab (free GPU)             │
+    │                                              │
+    │  1. Fetch cards from Supabase (anon key)     │
+    │  2. Download card images (~18k)              │
+    │  3. Load DINOv2 ViT-B/14 (torch.hub)        │
+    │  4. Generate 512-D embeddings                │
+    │  5. Upload to card_embeddings table          │
+    │  6. Save projection weights to Google Drive  │
+    │                                              │
+    │  No training needed!                         │
+    │  ~5 min on T4 GPU                            │
+    └──────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                    DEPLOYMENT / CI/CD
+═══════════════════════════════════════════════════════════════════
+
+    Push to main branch
+         │
+         ▼
+    ┌─────────────────────────────────┐
+    │   GitHub Actions Workflow       │
+    │                                 │
+    │   1. npm ci                     │
+    │   2. npm run build              │
+    │      (injects Supabase keys     │
+    │       from repo secrets)        │
+    │   3. Deploy to GitHub Pages     │
+    └─────────────────────────────────┘
+         │
+         ▼
+    https://guanill.github.io/Poketeer/
+```

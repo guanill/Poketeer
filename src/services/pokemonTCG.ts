@@ -320,19 +320,27 @@ export function getAvailableVariants(card: PokemonCard): import('../types').Card
   // Energy / Trainer basics: normal only
   if (supertype === 'energy') return ['normal'];
 
-  // Special rarities — one-of-a-kind prints, no normal/reverse
+  // Card name helps catch Mega, EX, GX etc. that are always ultra rare
+  const name = (card.name ?? '').toLowerCase();
+  const isMega = name.includes('mega ') || name.startsWith('m ');
+  const isEXupper = /\bEX\b/.test(card.name ?? ''); // Modern EX (uppercase) = ultra rare
+  const isGXcard = name.includes('-gx') || /\bGX\b/.test(card.name ?? '');
+  const isVcard = /\bV\b/.test(card.name ?? '') || name.includes('vmax') || name.includes('vstar');
+
+  // Special rarities — one-of-a-kind prints, holofoil only
   const isUltra =
     r.includes('ultra') || r.includes('secret') || r.includes('rainbow') ||
     r.includes('hyper') || r.includes('gold') || r.includes('full art') ||
     r.includes('illustration') || r.includes('special art') ||
-    r.includes('art rare') || r.includes('sar') || r.includes('sir');
+    r.includes('art rare') || r.includes('sar') || r.includes('sir') ||
+    r.includes('rare holo ex') || r.includes('rare holo gx') ||
+    r.includes('rare holo v') || r.includes('rare ultra') ||
+    isMega || isEXupper || isGXcard || isVcard;
   if (isUltra) return ['holofoil'];
 
   // Holo rares: holofoil + reverse holo (no non-holo normal)
   const isHolo =
-    r.includes('rare holo') || r === 'holo rare' ||
-    r.includes('vmax') || r.includes('vstar') || r.includes('v ') || r === 'v' ||
-    r.includes(' ex') || r === 'ex' || r.includes(' gx') || r === 'gx';
+    r.includes('rare holo') || r === 'holo rare';
   if (isHolo) return ['holofoil', 'reverseHolofoil'];
 
   // Rare (non-holo): normal + reverse holo
