@@ -574,11 +574,11 @@ export function CardScanner() {
           </div>
         )}
 
-        {/* ---- MOBILE: inline camera feed always visible ---- */}
+        {/* ---- MOBILE: inline camera feed + upload, fits viewport ---- */}
         {isMobile && mode !== 'error' && (
-          <div className="space-y-3">
+          <div className="flex flex-col" style={{ height: 'calc(100svh - 10rem)' }}>
             {cameraSupported !== false ? (
-              <div className="relative rounded-2xl overflow-hidden border border-amber-400/20"
+              <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden border border-amber-400/20"
                 style={{ background: '#000' }}
               >
                 <video
@@ -586,7 +586,7 @@ export function CardScanner() {
                   autoPlay
                   playsInline
                   muted
-                  className="w-full aspect-3/4 object-cover"
+                  className="absolute inset-0 w-full h-full object-cover"
                 />
 
                 {/* Card outline guide */}
@@ -594,7 +594,7 @@ export function CardScanner() {
                   <div
                     className="relative rounded-xl border-2 border-amber-400/60"
                     style={{
-                      width: '65%',
+                      width: '60%',
                       aspectRatio: '2.5 / 3.5',
                       boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
                     }}
@@ -653,14 +653,14 @@ export function CardScanner() {
                 )}
               </div>
             ) : (
-              <div className="w-full flex flex-col items-center justify-center gap-3 py-14 rounded-2xl border border-white/8 bg-white/2">
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 rounded-2xl border border-white/8 bg-white/2">
                 <Camera size={30} className="text-gray-600" />
-                <p className="text-xs text-gray-600">Camera unavailable — use upload below</p>
+                <p className="text-xs text-gray-600">Camera unavailable — use upload</p>
               </div>
             )}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-white/8 text-gray-400 hover:text-white hover:border-white/15 transition-colors"
+              className="shrink-0 w-full flex items-center justify-center gap-2 py-3 mt-2 rounded-xl border border-white/8 text-gray-400 hover:text-white hover:border-white/15 transition-colors"
             >
               <Upload size={14} />
               <span className="text-xs font-medium">Upload from gallery</span>
