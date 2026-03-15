@@ -346,7 +346,7 @@ export function CardScanner() {
   const uid = useId();
   const [mode, setMode]           = useState<UIMode>('idle');
   const [jobs, setJobs]           = useState<ScanJob[]>([]);
-  const [errorMsg, setErrorMsg]   = useState('');
+  const [errorMsg]   = useState('');
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [cameraSupported, setCameraSupported] = useState<boolean | null>(null);
   const [shotFlash, setShotFlash] = useState(false);
@@ -526,7 +526,7 @@ export function CardScanner() {
 
         {/* Backend offline banner */}
         <AnimatePresence>
-          {backendOk === false && mode !== 'camera' && (
+          {backendOk === false && (
             <motion.div
               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
@@ -543,7 +543,7 @@ export function CardScanner() {
         </AnimatePresence>
 
         {/* Server connection (native only) */}
-        {isNativePlatform() && mode !== 'camera' && (
+        {isNativePlatform() && (
           <div className="p-3 rounded-xl bg-white/3 border border-white/8 space-y-2">
             <div className="flex items-center gap-2">
               <Wifi size={13} className={serverConnected ? 'text-emerald-400' : 'text-gray-500'} />
@@ -708,7 +708,7 @@ export function CardScanner() {
 
         {/* SCAN QUEUE */}
         <AnimatePresence>
-          {jobs.length > 0 && mode !== 'camera' && (
+          {jobs.length > 0 && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
