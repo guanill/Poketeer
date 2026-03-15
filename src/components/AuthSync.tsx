@@ -12,30 +12,33 @@ import { useCollectionStore } from '../store/collectionStore';
  */
 export function AuthSync() {
   const { user } = useAuth();
-  const syncedRef = useRef<string | null>(null);
-  const { _syncUserId, syncFromSupabase, uploadToSupabase, getUniqueCards } = useCollectionStore();
+  const lastSyncedId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user) {
-      syncedRef.current = null;
+      lastSyncedId.current = null;
       return;
     }
 
-    // Don't re-sync if we already synced for this user in this session
-    if (syncedRef.current === user.id) return;
-    syncedRef.current = user.id;
+    // Don't re-sync if we already synced for this user in this render cycle
+    if (lastSyncedId.current === user.id) return;
+    lastSyncedId.current = user.id;
+
+    const store = useCollectionStore.getState();
 
     (async () => {
       // First time this user logs in on this device:
       // upload any localStorage data, then pull merged result
-      if (_syncUserId !== user.id && getUniqueCards() > 0) {
+      if (store._syncUserId !== user.id && store.getUniqueCards() > 0) {
         console.log('[auth-sync] First sync — uploading local collection to Supabase');
-        await uploadToSupabase(user.id);
+        await store.uploadToSupabase(user.id);
       }
+
+      // Always pull from Supabase — cloud is source of truth
       console.log('[auth-sync] Pulling collection from Supabase');
-      await syncFromSupabase(user.id);
+      await store.syncFromSupabase(user.id);
     })();
-  }, [user, _syncUserId, syncFromSupabase, uploadToSupabase, getUniqueCards]);
+  }, [user]);
 
   return null;
 }
