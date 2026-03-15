@@ -4,7 +4,7 @@ import { CardScanner } from '../components/CardScanner';
 
 export function Scan() {
   return (
-    <div className="space-y-5 max-sm:overflow-hidden max-sm:h-[calc(100svh-10rem)]">
+    <div className="space-y-5">
       {/* Header — desktop only, mobile has bottom tab label */}
       <motion.div
         initial={{ opacity: 0, y: -12 }}

@@ -32,7 +32,7 @@ function AppRoutes() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -12 }}
         transition={{ duration: 0.2, ease: 'easeInOut' }}
-        className="min-h-screen main-content px-4 max-w-7xl mx-auto"
+        className="main-content px-4 max-w-7xl mx-auto"
       >
         <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Dashboard />} />
