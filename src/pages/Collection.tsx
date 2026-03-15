@@ -1,23 +1,26 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, DollarSign, TrendingUp, Trash2, Package } from 'lucide-react';
-import { pokemonTCGService } from '../services/pokemonTCG';
+import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame } from 'lucide-react';
+import { pokemonTCGService, getCardMarketPrice } from '../services/pokemonTCG';
 import { useCollectionStore } from '../store/collectionStore';
+import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
-import { StatCard } from '../components/StatCard';
+import { RARITY_ORDER, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard } from '../types';
+
+type SortOption = 'date' | 'name-asc' | 'name-desc' | 'set' | 'rarity-desc' | 'rarity-asc' | 'price-desc' | 'price-asc';
 
 export function Collection() {
   const [selectedCard, setSelectedCard] = useState<PokemonCard | null>(null);
-  const [sortBy, setSortBy] = useState<'name' | 'date' | 'value' | 'set'>('date');
+  const [sortBy, setSortBy] = useState<SortOption>('date');
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [gridSize, setGridSize] = useState<'small' | 'large'>('small');
 
   const owned = useCollectionStore(s => s.owned);
   const customPrices = useCollectionStore(s => s.customPrices);
-  const removeCard = useCollectionStore(s => s.removeCard);
-  const getTotalSpent = useCollectionStore(s => s.getTotalSpent);
-  const getTotalCards = useCollectionStore(s => s.getTotalCards);
   const getUniqueCards = useCollectionStore(s => s.getUniqueCards);
+  const getTotalCards = useCollectionStore(s => s.getTotalCards);
 
   const cardIds = Object.keys(owned);
 
@@ -28,42 +31,63 @@ export function Collection() {
     staleTime: 1000 * 60 * 10,
   });
 
-  // Prices fetched from local backend (which caches from pokemontcg.io)
   const { data: prices = {} } = useQuery({
     queryKey: ['prices', cardIds.join(',')],
     queryFn: () => pokemonTCGService.getPrices(cardIds),
     enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 60, // re-fetch prices once per hour
+    staleTime: 1000 * 60 * 60,
   });
 
-  // API price first, then manually set custom price as fallback
   const getPrice = (cardId: string): number | null => prices[cardId] ?? customPrices[cardId] ?? null;
 
-  const totalMarketValue = useMemo(() => {
-    return cardIds.reduce((sum, id) => {
-      const price = getPrice(id) ?? 0;
-      return sum + price * (owned[id]?.quantity ?? 1);
-    }, 0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prices, owned]);
-
-  const profitLoss = totalMarketValue - getTotalSpent();
+  // Extract types from owned cards
+  const availableTypes = useMemo(() => {
+    if (!cards) return [];
+    const types = new Set<string>();
+    cards.forEach(c => c.types?.forEach(t => types.add(t)));
+    return Array.from(types).sort();
+  }, [cards]);
 
   const sortedCards = useMemo(() => {
     if (!cards) return [];
-    return [...cards].sort((a, b) => {
-      if (sortBy === 'name') return a.name.localeCompare(b.name);
-      if (sortBy === 'set') return a.set.name.localeCompare(b.set.name);
-      if (sortBy === 'value') {
-        return (getPrice(b.id) ?? 0) - (getPrice(a.id) ?? 0);
+    let filtered = typeFilter
+      ? cards.filter(c => c.types?.includes(typeFilter))
+      : cards;
+
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc': return a.name.localeCompare(b.name);
+        case 'name-desc': return b.name.localeCompare(a.name);
+        case 'set': return a.set.name.localeCompare(b.set.name) || parseInt(a.number) - parseInt(b.number);
+        case 'rarity-desc': return (RARITY_ORDER[b.rarity?.toLowerCase() ?? ''] ?? 3) - (RARITY_ORDER[a.rarity?.toLowerCase() ?? ''] ?? 3);
+        case 'rarity-asc': return (RARITY_ORDER[a.rarity?.toLowerCase() ?? ''] ?? 3) - (RARITY_ORDER[b.rarity?.toLowerCase() ?? ''] ?? 3);
+        case 'price-desc': return (getPrice(b.id) ?? 0) - (getPrice(a.id) ?? 0);
+        case 'price-asc': return (getPrice(a.id) ?? 0) - (getPrice(b.id) ?? 0);
+        default: {
+          // date — most recently added first
+          const da = owned[a.id]?.dateAdded ?? '';
+          const db = owned[b.id]?.dateAdded ?? '';
+          return db.localeCompare(da);
+        }
       }
-      // date
-      const da = owned[a.id]?.dateAdded ?? '';
-      const db = owned[b.id]?.dateAdded ?? '';
-      return db.localeCompare(da);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, sortBy, owned, prices]);
+  }, [cards, sortBy, owned, prices, typeFilter]);
+
+  // Group by set when sorting by set
+  const groupedBySet = useMemo(() => {
+    if (sortBy !== 'set') return null;
+    const groups: { name: string; logo?: string; cards: PokemonCard[] }[] = [];
+    let current: typeof groups[0] | null = null;
+    for (const card of sortedCards) {
+      if (!current || current.name !== card.set.name) {
+        current = { name: card.set.name, logo: card.set.images.logo, cards: [] };
+        groups.push(current);
+      }
+      current.cards.push(card);
+    }
+    return groups;
+  }, [sortBy, sortedCards]);
 
   if (cardIds.length === 0) {
     return (
@@ -100,9 +124,13 @@ export function Collection() {
     );
   }
 
+  const gridClass = gridSize === 'small'
+    ? 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3'
+    : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4';
+
   return (
-    <div className="space-y-6">
-      {/* ── Header ───────────────────────────────────────── */}
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <p className="page-section-label mb-1.5">Card Vault</p>
@@ -120,128 +148,137 @@ export function Collection() {
 
       <div className="gradient-divider" />
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          title="Market Value"
-          value={`$${totalMarketValue.toFixed(2)}`}
-          subtitle="current estimate"
-          icon={<TrendingUp size={20} />}
-          color="#10b981"
-        />
-        <StatCard
-          title="Total Spent"
-          value={`$${getTotalSpent().toFixed(2)}`}
-          subtitle="purchase total"
-          icon={<DollarSign size={20} />}
-          color="#3b82f6"
-        />
-        <StatCard
-          title="Profit/Loss"
-          value={`${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`}
-          subtitle={profitLoss >= 0 ? "in the green 📈" : "in the red 📉"}
-          icon={<TrendingUp size={20} />}
-          color={profitLoss >= 0 ? '#10b981' : '#ef4444'}
-        />
-        <StatCard
-          title="Cards Owned"
-          value={getTotalCards()}
-          subtitle={`${getUniqueCards()} unique`}
-          icon={<Package size={20} />}
-          color="#8b5cf6"
-        />
-      </div>
-
-      {/* ── Sort Controls ────────────────────────────────── */}
+      {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="page-section-label">Sort</span>
-        {(['date', 'name', 'value', 'set'] as const).map(opt => (
-          <button
-            key={opt}
-            onClick={() => setSortBy(opt)}
-            className={`sort-pill capitalize ${sortBy === opt ? 'sort-pill-active' : ''}`}
+        {/* Sort dropdown */}
+        <div className="relative">
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as SortOption)}
+            className="appearance-none pl-7 pr-3 py-1.5 rounded-xl bg-[#1a1a2e] border border-white/5 text-xs text-gray-400 hover:text-white cursor-pointer focus:outline-none focus:border-violet-500/30 transition-colors"
           >
-            {opt}
+            <option value="date">Recently Added</option>
+            <option value="name-asc">Name A→Z</option>
+            <option value="name-desc">Name Z→A</option>
+            <option value="set">By Set</option>
+            <option value="rarity-desc">Rarity ↓</option>
+            <option value="rarity-asc">Rarity ↑</option>
+            <option value="price-desc">Price ↓</option>
+            <option value="price-asc">Price ↑</option>
+          </select>
+          <ArrowUpDown size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+        </div>
+
+        {/* Results count */}
+        <span className="text-xs text-gray-600">
+          {sortedCards.length} card{sortedCards.length !== 1 ? 's' : ''}
+        </span>
+
+        {/* Grid toggle */}
+        <div className="flex gap-1 p-1 rounded-xl bg-[#1a1a2e] border border-white/5 ml-auto">
+          <button
+            onClick={() => setGridSize('small')}
+            className={`p-1.5 rounded-lg transition-colors ${gridSize === 'small' ? 'text-amber-400 bg-amber-400/10' : 'text-gray-500'}`}
+          >
+            <Grid size={15} />
           </button>
-        ))}
+          <button
+            onClick={() => setGridSize('large')}
+            className={`p-1.5 rounded-lg transition-colors ${gridSize === 'large' ? 'text-amber-400 bg-amber-400/10' : 'text-gray-500'}`}
+          >
+            <LayoutList size={15} />
+          </button>
+        </div>
       </div>
 
-      {/* ── Cards List ───────────────────────────────────── */}
+      {/* Type filter chips */}
+      {availableTypes.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Flame size={13} className="text-gray-600 shrink-0" />
+          <button
+            onClick={() => setTypeFilter(null)}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+              !typeFilter
+                ? 'bg-white/10 text-white border border-white/15'
+                : 'text-gray-500 hover:text-gray-300 border border-transparent'
+            }`}
+          >
+            All
+          </button>
+          {availableTypes.map(t => {
+            const tc = TYPE_COLORS[t] ?? { color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' };
+            const active = typeFilter === t;
+            return (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(active ? null : t)}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all"
+                style={{
+                  background: active ? tc.bg : 'transparent',
+                  color: active ? tc.color : '#6b7280',
+                  border: active ? `1px solid ${tc.color}40` : '1px solid transparent',
+                }}
+              >
+                {t}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Cards */}
       {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-16 rounded-xl bg-white/5 shimmer" />
+        <div className={gridClass}>
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="aspect-[2.5/3.5] rounded-2xl bg-white/5 shimmer" />
+          ))}
+        </div>
+      ) : groupedBySet ? (
+        // Grouped by set view
+        <div className="space-y-6">
+          {groupedBySet.map(group => (
+            <div key={group.name}>
+              <div className="flex items-center gap-3 mb-3">
+                {group.logo && (
+                  <img src={group.logo} alt={group.name} className="h-6 object-contain" />
+                )}
+                <h3 className="text-sm font-bold text-gray-400">{group.name}</h3>
+                <span className="text-xs text-gray-600">{group.cards.length} cards</span>
+              </div>
+              <AnimatePresence mode="popLayout">
+                <motion.div className={gridClass}>
+                  {group.cards.map(card => (
+                    <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
+                  ))}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           ))}
         </div>
       ) : (
-        <AnimatePresence>
-          <div className="space-y-2">
-            {sortedCards.map((card, i) => {
-              const ownedCard = owned[card.id];
-              const marketPrice = getPrice(card.id);
-              const spent = ownedCard?.pricePaid ?? null;
-              const profit = marketPrice && spent ? (marketPrice - spent) * ownedCard.quantity : null;
-
-              return (
-                <motion.div
-                  key={card.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  transition={{ delay: i * 0.02 }}
-                  whileHover={{ x: 3 }}
-                  className="card-list-item group"
-                  onClick={() => setSelectedCard(card)}
-                >
-                  <img
-                    src={card.images.small}
-                    alt={card.name}
-                    className="w-10 h-14 object-contain rounded-lg shrink-0"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-white truncate">{card.name}</p>
-                      {ownedCard?.quantity > 1 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full font-bold"
-                          style={{ background: 'rgba(139,92,246,0.2)', color: '#c4b5fd' }}>
-                          ×{ownedCard.quantity}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 mt-0.5">
-                      <p className="text-xs text-gray-500">{card.set.name}</p>
-                      <span className="text-xs text-gray-600">#{card.number}</span>
-                      {ownedCard?.condition && (
-                        <span className="text-xs text-gray-600 border border-white/10 px-1.5 rounded">{ownedCard.condition}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    {marketPrice && (
-                      <span className="text-sm font-bold text-emerald-400">${marketPrice.toFixed(2)}</span>
-                    )}
-                    {spent && (
-                      <span className="text-xs text-gray-500">paid ${spent.toFixed(2)}</span>
-                    )}
-                    {profit !== null && (
-                      <span className={`text-xs font-bold ${profit >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
-                        {profit >= 0 ? '+' : ''}${profit.toFixed(2)}
-                      </span>
-                    )}
-                  </div>
-                  <motion.button
-                    initial={{ opacity: 0 }}
-                    whileHover={{ opacity: 1 }}
-                    className="opacity-0 group-hover:opacity-100 p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 shrink-0 transition-all"
-                    onClick={(e) => { e.stopPropagation(); removeCard(card.id); }}
-                  >
-                    <Trash2 size={14} />
-                  </motion.button>
-                </motion.div>
-              );
-            })}
-          </div>
+        // Flat grid view
+        <AnimatePresence mode="popLayout">
+          <motion.div
+            key={`${sortBy}-${typeFilter}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className={gridClass}
+          >
+            {sortedCards.map(card => (
+              <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
+            ))}
+          </motion.div>
         </AnimatePresence>
+      )}
+
+      {sortedCards.length === 0 && !isLoading && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-center py-16"
+        >
+          <p className="text-gray-400 text-sm">No cards match this filter</p>
+        </motion.div>
       )}
 
       <CardDetailModal

@@ -187,11 +187,9 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
         })()}
       </div>
 
-      {/* Action Buttons — appear on hover */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        whileHover={{ opacity: 1, y: 0 }}
-        className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-[#0a0a1f] to-transparent p-2 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+      {/* Action Buttons — always visible on mobile, hover on desktop */}
+      <div
+        className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-[#0a0a1f]/80 sm:from-[#0a0a1f] to-transparent p-2 flex items-center justify-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-20"
       >
         {isOwned ? (
           <motion.button
@@ -232,7 +230,7 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
         >
           <Eye size={12} />
         </motion.button>
-      </motion.div>
+      </div>
     </motion.div>
   );
 }

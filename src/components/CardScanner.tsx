@@ -163,7 +163,6 @@ function JobCard({
 
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: 60, scale: 0.95 }}
@@ -186,37 +185,43 @@ function JobCard({
             alt="scan"
             className="w-12 h-16 object-cover rounded-lg"
           />
-          {job.status === 'scanning' && (
-            <motion.div
-              className="absolute inset-x-0 h-0.5 bg-amber-400 shadow-[0_0_8px_2px_rgba(245,158,11,0.5)]"
-              initial={{ top: '5%' }}
-              animate={{ top: ['5%', '90%', '5%'] }}
-              transition={{ repeat: Infinity, duration: 1.6, ease: 'easeInOut' }}
-            />
-          )}
+          <AnimatePresence>
+            {job.status === 'scanning' && (
+              <motion.div
+                key="scan-line"
+                className="absolute inset-x-0 h-0.5 bg-amber-400 shadow-[0_0_8px_2px_rgba(245,158,11,0.5)]"
+                initial={{ top: '5%', opacity: 0 }}
+                animate={{ top: ['5%', '90%', '5%'], opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ repeat: Infinity, duration: 1.6, ease: 'easeInOut' }}
+              />
+            )}
+          </AnimatePresence>
         </div>
 
         <div className="flex-1 min-w-0">
+          <AnimatePresence mode="wait">
           {job.status === 'scanning' ? (
-            <div className="flex items-center gap-2 text-amber-400">
+            <motion.div key="scanning" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="flex items-center gap-2 text-amber-400">
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}>
                 <Loader2 size={13} />
               </motion.div>
               <span className="text-xs font-semibold">Identifying...</span>
-            </div>
+            </motion.div>
           ) : job.status === 'error' ? (
-            <div className="flex items-center gap-1.5 text-red-400">
+            <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="flex items-center gap-1.5 text-red-400">
               <AlertTriangle size={13} />
               <span className="text-xs font-semibold">Failed</span>
-            </div>
+            </motion.div>
           ) : topMatch ? (
-            <div>
+            <motion.div key="match" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
               <p className="text-sm font-bold text-white truncate">{topMatch.name}</p>
               <p className="text-xs text-gray-500 truncate">{topMatch.set_name} · #{topMatch.number}</p>
-            </div>
+            </motion.div>
           ) : (
-            <p className="text-xs text-gray-500">No matches found</p>
+            <motion.p key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="text-xs text-gray-500">No matches found</motion.p>
           )}
+          </AnimatePresence>
 
           {job.status === 'done' && topMatch && !needsManual && (
             <div className="flex items-center gap-1.5 mt-1">
@@ -485,6 +490,32 @@ export function CardScanner() {
 
   const scanningCount = jobs.filter(j => j.status === 'scanning').length;
   const doneCount     = jobs.filter(j => j.status === 'done').length;
+
+  // Batch add
+  const batchOwned = useCollectionStore(s => s.owned);
+  const batchAddCard = useCollectionStore(s => s.addCard);
+  const [batchAddResult, setBatchAddResult] = useState<{ count: number } | null>(null);
+
+  const addableJobs = jobs.filter(j =>
+    j.status === 'done' &&
+    j.matches.length > 0 &&
+    j.matches[0].confidence >= 0.5 &&
+    !(batchOwned[j.matches[0].id]?.quantity > 0)
+  );
+
+  const handleAddAll = useCallback(() => {
+    const currentOwned = useCollectionStore.getState().owned;
+    let count = 0;
+    for (const job of addableJobs) {
+      const topMatch = job.matches[0];
+      if (!(currentOwned[topMatch.id]?.quantity > 0)) {
+        batchAddCard(topMatch.id);
+        count++;
+      }
+    }
+    setBatchAddResult({ count });
+    setTimeout(() => setBatchAddResult(null), 3000);
+  }, [addableJobs, batchAddCard]);
 
   return (
     <>
@@ -821,6 +852,44 @@ export function CardScanner() {
                   </button>
                 )}
               </div>
+
+              {/* Batch add bar */}
+              <AnimatePresence>
+                {addableJobs.length > 1 && !batchAddResult && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/8 border border-emerald-500/20">
+                      <span className="text-sm font-bold text-white">
+                        {addableJobs.length} new cards found
+                      </span>
+                      <motion.button
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleAddAll}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors flex items-center gap-1.5"
+                      >
+                        <Plus size={13} />
+                        Add All
+                      </motion.button>
+                    </div>
+                  </motion.div>
+                )}
+                {batchAddResult && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-center"
+                  >
+                    <span className="text-sm font-bold text-emerald-400">
+                      {batchAddResult.count} card{batchAddResult.count !== 1 ? 's' : ''} added to collection
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="space-y-2">
                 <AnimatePresence initial={false}>

@@ -1,15 +1,16 @@
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { 
-  Package, Heart, Layers, DollarSign, 
-  Trophy, BarChart3, ChevronRight
+import {
+  Package, Heart, Layers, DollarSign,
+  Trophy, BarChart3, ChevronRight, TrendingUp
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { pokemonTCGService } from '../services/pokemonTCG';
+import { pokemonTCGService, getRarityColor } from '../services/pokemonTCG';
 import { useCollectionStore } from '../store/collectionStore';
 import { StatCard } from '../components/StatCard';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { TYPE_COLORS } from '../utils/cardConstants';
 
 export function Dashboard() {
   const owned = useCollectionStore(s => s.owned);
@@ -18,16 +19,33 @@ export function Dashboard() {
   const getTotalCards = useCollectionStore(s => s.getTotalCards);
   const getUniqueCards = useCollectionStore(s => s.getUniqueCards);
 
+  const cardIds = Object.keys(owned);
+
   const { data: sets, isLoading } = useQuery({
     queryKey: ['sets', 'v2', 'en'],
     queryFn: () => pokemonTCGService.getSets('en'),
     staleTime: 1000 * 60 * 60,
   });
 
+  // Prices for portfolio value
+  const { data: prices = {} } = useQuery({
+    queryKey: ['dashboard-prices', cardIds.join(',')],
+    queryFn: () => pokemonTCGService.getPrices(cardIds),
+    enabled: cardIds.length > 0,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  // Card details for insights
+  const { data: ownedCards } = useQuery({
+    queryKey: ['dashboard-owned-cards', cardIds.join(',')],
+    queryFn: () => pokemonTCGService.getCardsByIds(cardIds),
+    enabled: cardIds.length > 0,
+    staleTime: 1000 * 60 * 10,
+  });
+
   // Compute set progress
   const setProgress = useMemo(() => {
     if (!sets) return [];
-    // Group owned cards by set
     const ownedBySet: Record<string, number> = {};
     Object.keys(owned).forEach(cardId => {
       const parts = cardId.split('-');
@@ -50,6 +68,41 @@ export function Dashboard() {
   const totalCards = getTotalCards();
   const uniqueCards = getUniqueCards();
   const completeSets = setProgress.filter(s => s.progress === 100).length;
+
+  // Portfolio value
+  const marketValue = useMemo(() => {
+    return cardIds.reduce((sum, id) => {
+      const price = prices[id] ?? 0;
+      return sum + price * (owned[id]?.quantity ?? 1);
+    }, 0);
+  }, [prices, owned, cardIds]);
+
+  const profitLoss = marketValue - totalSpent;
+
+  // Collection insights
+  const rarityDistribution = useMemo(() => {
+    if (!ownedCards) return [];
+    const counts: Record<string, number> = {};
+    ownedCards.forEach(c => {
+      const r = c.rarity ?? 'Common';
+      counts[r] = (counts[r] ?? 0) + (owned[c.id]?.quantity ?? 1);
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [ownedCards, owned]);
+
+  const typeDistribution = useMemo(() => {
+    if (!ownedCards) return [];
+    const counts: Record<string, number> = {};
+    ownedCards.forEach(c => {
+      c.types?.forEach(t => {
+        counts[t] = (counts[t] ?? 0) + (owned[c.id]?.quantity ?? 1);
+      });
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [ownedCards, owned]);
+
+  const maxRarityCount = rarityDistribution[0]?.[1] ?? 1;
+  const maxTypeCount = typeDistribution[0]?.[1] ?? 1;
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -79,7 +132,6 @@ export function Dashboard() {
         }}
       >
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {/* Decorative ambient rings */}
           <div
             className="absolute -right-24 -top-24 w-72 h-72 rounded-full"
             style={{ border: '28px solid rgba(139,92,246,0.07)' }}
@@ -108,7 +160,6 @@ export function Dashboard() {
               animate={{ y: [0, -4, 0] }}
               transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
             >
-              {/* Original card icon */}
               <svg width="40" height="52" viewBox="0 0 40 52" fill="none" xmlns="http://www.w3.org/2000/svg"
                 style={{ filter: 'drop-shadow(0 0 10px rgba(139,92,246,0.7))' }}
               >
@@ -172,7 +223,7 @@ export function Dashboard() {
       </motion.div>
 
       {/* Stats Grid */}
-      <motion.div variants={itemVariants} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <StatCard
           title="Total Cards"
           value={totalCards}
@@ -182,12 +233,20 @@ export function Dashboard() {
           delay={0}
         />
         <StatCard
-          title="Total Spent"
-          value={`$${totalSpent.toFixed(2)}`}
-          subtitle="across all cards"
-          icon={<DollarSign size={20} />}
-          color="#10b981"
+          title="Market Value"
+          value={`$${marketValue.toFixed(2)}`}
+          subtitle="current portfolio"
+          icon={<TrendingUp size={20} />}
+          color="#8b5cf6"
           delay={0.05}
+        />
+        <StatCard
+          title="Profit / Loss"
+          value={`${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`}
+          subtitle={totalSpent > 0 ? `spent $${totalSpent.toFixed(2)}` : 'no purchases tracked'}
+          icon={<DollarSign size={20} />}
+          color={profitLoss >= 0 ? '#10b981' : '#ef4444'}
+          delay={0.1}
         />
         <StatCard
           title="Complete Sets"
@@ -195,7 +254,7 @@ export function Dashboard() {
           subtitle="100% finished"
           icon={<Trophy size={20} />}
           color="#F59E0B"
-          delay={0.1}
+          delay={0.15}
         />
         <StatCard
           title="Wishlist"
@@ -203,9 +262,96 @@ export function Dashboard() {
           subtitle="cards wanted"
           icon={<Heart size={20} />}
           color="#ec4899"
-          delay={0.15}
+          delay={0.2}
+        />
+        <StatCard
+          title="Total Spent"
+          value={`$${totalSpent.toFixed(2)}`}
+          subtitle="purchase total"
+          icon={<DollarSign size={20} />}
+          color="#10b981"
+          delay={0.25}
         />
       </motion.div>
+
+      {/* Collection Insights */}
+      {uniqueCards > 0 && ownedCards && (rarityDistribution.length > 0 || typeDistribution.length > 0) && (
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Rarity Breakdown */}
+          {rarityDistribution.length > 0 && (
+            <div
+              className="p-4 rounded-2xl space-y-3"
+              style={{
+                background: 'linear-gradient(145deg, #1c1c38, #12122a)',
+                border: '1px solid rgba(255,255,255,0.05)',
+              }}
+            >
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <BarChart3 size={14} className="text-amber-400" />
+                Rarity Breakdown
+              </h3>
+              <div className="space-y-2">
+                {rarityDistribution.slice(0, 8).map(([rarity, count], i) => {
+                  const color = getRarityColor(rarity);
+                  const pct = (count / maxRarityCount) * 100;
+                  return (
+                    <div key={rarity} className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 w-28 truncate shrink-0">{rarity}</span>
+                      <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full"
+                          style={{ background: color }}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 0.6, delay: i * 0.05 }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-gray-500 font-bold w-8 text-right tabular-nums">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Type Breakdown */}
+          {typeDistribution.length > 0 && (
+            <div
+              className="p-4 rounded-2xl space-y-3"
+              style={{
+                background: 'linear-gradient(145deg, #1c1c38, #12122a)',
+                border: '1px solid rgba(255,255,255,0.05)',
+              }}
+            >
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <BarChart3 size={14} className="text-amber-400" />
+                Type Breakdown
+              </h3>
+              <div className="space-y-2">
+                {typeDistribution.map(([type, count], i) => {
+                  const tc = TYPE_COLORS[type] ?? { color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' };
+                  const pct = (count / maxTypeCount) * 100;
+                  return (
+                    <div key={type} className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium w-20 shrink-0" style={{ color: tc.color }}>{type}</span>
+                      <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full"
+                          style={{ background: tc.color }}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 0.6, delay: i * 0.05 }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-gray-500 font-bold w-8 text-right tabular-nums">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Set Progress */}
       <motion.div variants={itemVariants}>
@@ -259,7 +405,6 @@ export function Dashboard() {
                       border: progress === 100 ? '1px solid rgba(255,203,5,0.25)' : '1px solid rgba(255,255,255,0.05)',
                     }}
                   >
-                    {/* Set logo banner */}
                     <div className="shrink-0 w-20 h-10 flex items-center justify-center">
                       {set.images.logo ? (
                         <img
@@ -289,7 +434,6 @@ export function Dashboard() {
                           {ownedCount}/{set.total}
                         </span>
                       </div>
-                      {/* HP bar */}
                       <div className="hp-bar-track">
                         <motion.div
                           className={`hp-bar-fill ${
@@ -318,10 +462,10 @@ export function Dashboard() {
         )}
       </motion.div>
 
-      {/* Recent Activity / Tips */}
+      {/* Tips for new users */}
       {uniqueCards === 0 && (
         <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[            { icon: '🔍', title: 'Browse Sets', desc: 'Explore all Pokémon TCG sets ever released', link: '/sets', color: '#3b82f6' },
+          {[            { icon: '🔍', title: 'Browse Sets', desc: 'Explore all Pokemon TCG sets ever released', link: '/sets', color: '#3b82f6' },
             { icon: '📦', title: 'Track Collection', desc: 'Mark cards as owned and track prices paid', link: '/collection', color: '#10b981' },
             { icon: '💫', title: 'Wishlist', desc: 'Save cards you want with target prices', link: '/wishlist', color: '#ec4899' },
           ].map((tip, i) => (

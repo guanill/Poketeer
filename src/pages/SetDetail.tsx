@@ -2,14 +2,18 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Grid, LayoutList, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Grid, LayoutList, ChevronLeft, ChevronRight, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { ProgressRing } from '../components/ProgressRing';
 import { useCollectionStore } from '../store/collectionStore';
+import { getCardMarketPrice } from '../services/pokemonTCG';
+import { getRarityRank, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard, FilterOwned } from '../types';
+
+type SortOption = 'number' | 'name-asc' | 'name-desc' | 'rarity-asc' | 'rarity-desc' | 'price-desc' | 'price-asc';
 
 export function SetDetail() {
   const { setId } = useParams<{ setId: string }>();
@@ -18,9 +22,13 @@ export function SetDetail() {
   const isIntl = lang === 'ja' || lang === 'th';
   const [page, setPage] = useState(1);
   const [filterOwned, setFilterOwned] = useState<FilterOwned>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('number');
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<PokemonCard | null>(null);
   const [gridSize, setGridSize] = useState<'small' | 'large'>('small');
   const PAGE_SIZE = 60;
+
+  const hasActiveFilters = sortBy !== 'number' || typeFilter !== null;
 
   const owned = useCollectionStore(s => s.owned);
 
@@ -47,7 +55,7 @@ export function SetDetail() {
     queryFn: () => isIntl
       ? pokemonTCGService.getIntlCardsBySet(lang as 'ja' | 'th', setId!, 1, 500)
       : pokemonTCGService.getCardsBySet(setId!, 1, 500),
-    enabled: !!setId && filterOwned !== 'all',
+    enabled: !!setId && (filterOwned !== 'all' || hasActiveFilters),
     staleTime: 1000 * 60 * 10,
   });
 
@@ -59,7 +67,7 @@ export function SetDetail() {
     staleTime: 1000 * 60 * 60,
   });
 
-  const isLoading = filterOwned === 'all' ? loadingPage : loadingAll;
+  const isLoading = needsAllCards ? loadingAll : loadingPage;
   const totalCards = cardsData?.totalCount ?? 0;
 
   const ownedInSet = useMemo(() => {
@@ -69,25 +77,56 @@ export function SetDetail() {
 
   const progress = set ? Math.round((ownedInSet / set.total) * 100) : 0;
 
-  // When filter is active, work from the full card list; otherwise use current page
-  const sourceCards = filterOwned === 'all'
-    ? (cardsData?.data ?? [])
-    : (allCardsData?.data ?? []);
+  // When filter/sort is active, work from the full card list; otherwise use current page
+  const needsAllCards = filterOwned !== 'all' || hasActiveFilters;
+  const sourceCards = needsAllCards
+    ? (allCardsData?.data ?? [])
+    : (cardsData?.data ?? []);
+
+  // Extract unique types for the filter buttons
+  const availableTypes = useMemo(() => {
+    const cards = allCardsData?.data ?? cardsData?.data ?? [];
+    const types = new Set<string>();
+    cards.forEach(c => c.types?.forEach(t => types.add(t)));
+    return Array.from(types).sort();
+  }, [allCardsData, cardsData]);
 
   const filteredCards = useMemo(() => {
-    if (filterOwned === 'owned') return sourceCards.filter(c => !!owned[c.id]);
-    if (filterOwned === 'missing') return sourceCards.filter(c => !owned[c.id]);
-    return sourceCards;
-  }, [sourceCards, filterOwned, owned]);
+    let cards = sourceCards;
 
-  // Paginate filtered results client-side when a filter is active
+    // Ownership filter
+    if (filterOwned === 'owned') cards = cards.filter(c => !!owned[c.id]);
+    else if (filterOwned === 'missing') cards = cards.filter(c => !owned[c.id]);
+
+    // Type filter
+    if (typeFilter) cards = cards.filter(c => c.types?.includes(typeFilter));
+
+    // Sorting
+    if (sortBy !== 'number') {
+      cards = [...cards].sort((a, b) => {
+        switch (sortBy) {
+          case 'name-asc': return a.name.localeCompare(b.name);
+          case 'name-desc': return b.name.localeCompare(a.name);
+          case 'rarity-asc': return getRarityRank(a.rarity) - getRarityRank(b.rarity);
+          case 'rarity-desc': return getRarityRank(b.rarity) - getRarityRank(a.rarity);
+          case 'price-desc': return (getCardMarketPrice(b) ?? 0) - (getCardMarketPrice(a) ?? 0);
+          case 'price-asc': return (getCardMarketPrice(a) ?? 0) - (getCardMarketPrice(b) ?? 0);
+          default: return 0;
+        }
+      });
+    }
+
+    return cards;
+  }, [sourceCards, filterOwned, owned, typeFilter, sortBy]);
+
+  // Paginate filtered results client-side when filters/sort are active
   const displayCards = useMemo(() => {
-    if (filterOwned === 'all') return filteredCards; // server-paginated
+    if (!needsAllCards) return filteredCards; // server-paginated
     const start = (page - 1) * PAGE_SIZE;
     return filteredCards.slice(start, start + PAGE_SIZE);
-  }, [filteredCards, filterOwned, page]);
+  }, [filteredCards, needsAllCards, page]);
 
-  const totalFiltered = filterOwned === 'all' ? totalCards : filteredCards.length;
+  const totalFiltered = !needsAllCards ? totalCards : filteredCards.length;
   const totalPages = Math.ceil(totalFiltered / PAGE_SIZE);
 
   // Reset to page 1 whenever filter changes
@@ -155,6 +194,8 @@ export function SetDetail() {
       </div>
 
       <div className="gradient-divider" />
+
+      {/* Toolbar row 1: Ownership filter + grid toggle */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1 p-1 rounded-xl bg-[#1a1a2e] border border-white/5">
           {(['all', 'owned', 'missing'] as const).map(f => (
@@ -176,6 +217,24 @@ export function SetDetail() {
           ))}
         </div>
 
+        {/* Sort dropdown */}
+        <div className="relative">
+          <select
+            value={sortBy}
+            onChange={e => { setSortBy(e.target.value as SortOption); setPage(1); }}
+            className="appearance-none pl-7 pr-3 py-1.5 rounded-xl bg-[#1a1a2e] border border-white/5 text-xs text-gray-400 hover:text-white cursor-pointer focus:outline-none focus:border-violet-500/30 transition-colors"
+          >
+            <option value="number"># Number</option>
+            <option value="name-asc">Name A→Z</option>
+            <option value="name-desc">Name Z→A</option>
+            <option value="rarity-desc">Rarity ↓</option>
+            <option value="rarity-asc">Rarity ↑</option>
+            <option value="price-desc">Price ↓</option>
+            <option value="price-asc">Price ↑</option>
+          </select>
+          <ArrowUpDown size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+        </div>
+
         <div className="flex gap-1 p-1 rounded-xl bg-[#1a1a2e] border border-white/5 ml-auto">
           <button
             onClick={() => setGridSize('small')}
@@ -191,6 +250,41 @@ export function SetDetail() {
           </button>
         </div>
       </div>
+
+      {/* Toolbar row 2: Type filter chips */}
+      {availableTypes.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Flame size={13} className="text-gray-600 shrink-0" />
+          <button
+            onClick={() => { setTypeFilter(null); setPage(1); }}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+              !typeFilter
+                ? 'bg-white/10 text-white border border-white/15'
+                : 'text-gray-500 hover:text-gray-300 border border-transparent'
+            }`}
+          >
+            All Types
+          </button>
+          {availableTypes.map(t => {
+            const tc = TYPE_COLORS[t] ?? { color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' };
+            const active = typeFilter === t;
+            return (
+              <button
+                key={t}
+                onClick={() => { setTypeFilter(active ? null : t); setPage(1); }}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all"
+                style={{
+                  background: active ? tc.bg : 'transparent',
+                  color: active ? tc.color : '#6b7280',
+                  border: active ? `1px solid ${tc.color}40` : '1px solid transparent',
+                }}
+              >
+                {t}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Card Grid */}
       {isLoading ? (

@@ -1,11 +1,12 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Search as SearchIcon, X, Sparkles, Loader2 } from 'lucide-react';
+import { Search as SearchIcon, X, Sparkles, Loader2, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { getRarityRank, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard } from '../types';
 
 const POPULAR_SEARCHES = [
@@ -15,11 +16,15 @@ const POPULAR_SEARCHES = [
 
 const PAGE_SIZE = 30;
 
+type SortOption = 'relevance' | 'name-asc' | 'name-desc' | 'rarity-desc' | 'rarity-asc';
+
 export function Search() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [selectedCard, setSelectedCard] = useState<PokemonCard | null>(null);
   const [debounceTimeout, setDebounceTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [sortBy, setSortBy] = useState<SortOption>('relevance');
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const handleInput = (value: string) => {
@@ -28,6 +33,12 @@ export function Search() {
     const t = setTimeout(() => setDebouncedQuery(value), 150);
     setDebounceTimeout(t);
   };
+
+  // Reset filters when query changes
+  useEffect(() => {
+    setSortBy('relevance');
+    setTypeFilter(null);
+  }, [debouncedQuery]);
 
   const {
     data,
@@ -42,9 +53,7 @@ export function Search() {
       pokemonTCGService.searchCards(debouncedQuery, pageParam, PAGE_SIZE),
     initialPageParam: 1,
     getNextPageParam: (lastPage) => {
-      // totalCount === -1 means "there are more"
       if (lastPage.totalCount === -1) return lastPage.page + 1;
-      // If we got fewer than pageSize, we're done
       if (lastPage.count < PAGE_SIZE) return undefined;
       return undefined;
     },
@@ -53,6 +62,33 @@ export function Search() {
   });
 
   const allCards = data?.pages.flatMap((p) => p.data) ?? [];
+
+  // Extract types from loaded results
+  const availableTypes = useMemo(() => {
+    const types = new Set<string>();
+    allCards.forEach(c => c.types?.forEach(t => types.add(t)));
+    return Array.from(types).sort();
+  }, [allCards]);
+
+  // Apply client-side filtering and sorting
+  const displayCards = useMemo(() => {
+    let cards = allCards;
+    if (typeFilter) {
+      cards = cards.filter(c => c.types?.includes(typeFilter));
+    }
+    if (sortBy !== 'relevance') {
+      cards = [...cards].sort((a, b) => {
+        switch (sortBy) {
+          case 'name-asc': return a.name.localeCompare(b.name);
+          case 'name-desc': return b.name.localeCompare(a.name);
+          case 'rarity-desc': return getRarityRank(b.rarity) - getRarityRank(a.rarity);
+          case 'rarity-asc': return getRarityRank(a.rarity) - getRarityRank(b.rarity);
+          default: return 0;
+        }
+      });
+    }
+    return cards;
+  }, [allCards, sortBy, typeFilter]);
 
   // Infinite scroll observer
   const handleObserver = useCallback(
@@ -77,18 +113,15 @@ export function Search() {
   const resultText = (() => {
     if (!data || allCards.length === 0) return null;
     const lastPage = data.pages[data.pages.length - 1];
-    if (lastPage.totalCount === -1) {
-      // We know there are more
-      return (
-        <>
-          <span className="text-amber-400/80 font-bold">{allCards.length}+</span> results for{' '}
-          <span className="text-white font-bold">"{debouncedQuery}"</span>
-        </>
-      );
-    }
+    const countLabel = displayCards.length !== allCards.length
+      ? `${displayCards.length} of ${allCards.length}`
+      : lastPage.totalCount === -1
+      ? `${allCards.length}+`
+      : `${allCards.length}`;
+
     return (
       <>
-        <span className="text-amber-400/80 font-bold">{allCards.length}</span> results for{' '}
+        <span className="text-amber-400/80 font-bold">{countLabel}</span> results for{' '}
         <span className="text-white font-bold">"{debouncedQuery}"</span>
       </>
     );
@@ -168,22 +201,78 @@ export function Search() {
         </motion.div>
       )}
 
+      {/* Sort & Filter toolbar — only show when we have results */}
+      {allCards.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as SortOption)}
+                className="appearance-none pl-7 pr-3 py-1.5 rounded-xl bg-[#1a1a2e] border border-white/5 text-xs text-gray-400 hover:text-white cursor-pointer focus:outline-none focus:border-violet-500/30 transition-colors"
+              >
+                <option value="relevance">Relevance</option>
+                <option value="name-asc">Name A→Z</option>
+                <option value="name-desc">Name Z→A</option>
+                <option value="rarity-desc">Rarity ↓</option>
+                <option value="rarity-asc">Rarity ↑</option>
+              </select>
+              <ArrowUpDown size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            </div>
+            <span className="text-xs text-gray-600">{resultText}</span>
+          </div>
+
+          {availableTypes.length > 1 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Flame size={13} className="text-gray-600 shrink-0" />
+              <button
+                onClick={() => setTypeFilter(null)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                  !typeFilter
+                    ? 'bg-white/10 text-white border border-white/15'
+                    : 'text-gray-500 hover:text-gray-300 border border-transparent'
+                }`}
+              >
+                All
+              </button>
+              {availableTypes.map(t => {
+                const tc = TYPE_COLORS[t] ?? { color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' };
+                const active = typeFilter === t;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setTypeFilter(active ? null : t)}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all"
+                    style={{
+                      background: active ? tc.bg : 'transparent',
+                      color: active ? tc.color : '#6b7280',
+                      border: active ? `1px solid ${tc.color}40` : '1px solid transparent',
+                    }}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Results */}
       <AnimatePresence mode="wait">
         {isLoading && debouncedQuery ? (
           <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <LoadingSkeleton count={12} type="card" />
           </motion.div>
-        ) : allCards.length > 0 ? (
+        ) : displayCards.length > 0 ? (
           <motion.div
             key="results"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <p className="text-sm text-gray-500 mb-4">{resultText}</p>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-              {allCards.map((card) => (
+              {displayCards.map((card) => (
                 <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
               ))}
             </div>
