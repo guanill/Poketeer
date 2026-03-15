@@ -54,11 +54,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin + window.location.pathname },
+      options: {
+        redirectTo: window.location.origin + window.location.pathname,
+        skipBrowserRedirect: true,
+      },
     });
     if (error) throw error;
+    if (data?.url) {
+      const w = 500, h = 600;
+      const left = window.screenX + (window.innerWidth - w) / 2;
+      const top = window.screenY + (window.innerHeight - h) / 2;
+      window.open(data.url, 'google-signin', `width=${w},height=${h},left=${left},top=${top}`);
+    }
   };
 
   return (
