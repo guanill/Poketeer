@@ -259,6 +259,7 @@ export type Database = {
           image_large: string
           image_small: string
           name: string
+          name_en: string
           number: string
           rarity: string
           set_id: string

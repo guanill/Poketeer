@@ -14,6 +14,7 @@ CREATE OR REPLACE FUNCTION search_cards_fuzzy(
 RETURNS TABLE(
   id text,
   name text,
+  name_en text,
   number text,
   set_id text,
   rarity text,
@@ -29,7 +30,7 @@ RETURNS TABLE(
 LANGUAGE sql STABLE
 AS $$
   SELECT
-    c.id, c.name, c.number, c.set_id,
+    c.id, c.name, c.name_en, c.number, c.set_id,
     c.rarity, c.image_small, c.image_large,
     c.supertype, c.subtypes, c.hp, c.artist, c.types,
     GREATEST(similarity(c.name, query), similarity(c.name_en, query)) AS similarity
