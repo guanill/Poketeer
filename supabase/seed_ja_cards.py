@@ -3,18 +3,21 @@ seed_ja_cards.py — Fetch cards from TCGdex API for any language and seed to Su
 
 Phase 1 (fast): Fetch set details only to get all cards with images.
 Phase 2 (slow, optional): Fetch individual card details for extra fields (rarity, hp, etc.)
+Phase 3 (optional): Fetch English names from EN TCGdex API for Latin character display.
 
 Usage:
     pip install supabase python-dotenv requests
     python supabase/seed_ja_cards.py                # Japanese (default)
     python supabase/seed_ja_cards.py --lang th       # Thai
-    python supabase/seed_ja_cards.py --lang ja --full # Japanese + full details
+    python supabase/seed_ja_cards.py --lang ja --full # Japanese + full details + English names
+    python supabase/seed_ja_cards.py --lang ja --art-cards  # List all Japanese art cards
 """
 
 import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote
 
@@ -49,6 +52,22 @@ def get_lang():
 
 LANG = get_lang()
 TCGDEX_BASE = f"https://api.tcgdex.net/v2/{LANG}"
+TCGDEX_EN = "https://api.tcgdex.net/v2/en"
+
+# Japanese art card rarity identifiers
+ART_CARD_RARITIES = {
+    "Art Rare", "AR",
+    "Special Art Rare", "SAR",
+    "Character Rare", "CHR",
+    "Character Super Rare", "CSR",
+    "Illustration Rare", "IR",
+    "Special Illustration Rare", "SIR",
+    "Ultra Rare", "UR",
+    "Hyper Rare", "HR",
+    "Super Rare", "SR",
+    "S", "A", "AR", "SAR", "HR", "UR", "SR",
+    "Shiny Rare", "Shiny Super Rare",
+}
 
 
 def upsert_batch(table: str, rows: list[dict], batch_size: int = BATCH):
@@ -76,9 +95,9 @@ def fetch_json(url: str):
 # ---------------------------------------------------------------------------
 
 def phase1():
-    print("\n[Phase 1] Fetching Japanese sets from TCGdex...")
+    print(f"\n[Phase 1] Fetching {LANG.upper()} sets from TCGdex...")
     sets_list = fetch_json(f"{TCGDEX_BASE}/sets/")
-    print(f"  Found {len(sets_list)} Japanese sets")
+    print(f"  Found {len(sets_list)} sets")
 
     sets_dict: dict[str, dict] = {}
     cards_dict: dict[str, dict] = {}
@@ -135,6 +154,7 @@ def phase1():
                 "hp": "",
                 "artist": "",
                 "types": [],
+                "name_en": "",
             }
 
         # Small delay to be nice to the API
@@ -201,15 +221,173 @@ def phase2(card_ids: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: Fetch English names from EN TCGdex API
+# ---------------------------------------------------------------------------
+
+def _fetch_en_name(tcgdex_id: str) -> tuple[str, str]:
+    """Fetch a single card's English name. Returns (tcgdex_id, english_name)."""
+    try:
+        detail = fetch_json(f"{TCGDEX_EN}/cards/{quote(tcgdex_id, safe='')}")
+        return (tcgdex_id, detail.get("name", ""))
+    except Exception:
+        return (tcgdex_id, "")
+
+
+def phase3(cards: list[dict]):
+    print(f"\n[Phase 3] Fetching English names for {len(cards)} cards...")
+
+    # Build mapping: tcgdex_id -> supabase_id
+    id_map: dict[str, str] = {}
+    for c in cards:
+        full_id = c["id"]
+        tcgdex_id = full_id.removesuffix(f"-{LANG}")
+        id_map[tcgdex_id] = full_id
+
+    updates = []
+    errors = 0
+
+    # Use thread pool for faster fetching (8 concurrent requests)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_fetch_en_name, tid): tid
+            for tid in id_map.keys()
+        }
+
+        done_count = 0
+        for future in as_completed(futures):
+            done_count += 1
+            if done_count % 100 == 0:
+                print(f"  Progress: {done_count}/{len(futures)}")
+
+            tcgdex_id, en_name = future.result()
+            if en_name:
+                updates.append({
+                    "id": id_map[tcgdex_id],
+                    "name_en": en_name,
+                })
+            else:
+                errors += 1
+
+    print(f"\n  English names found: {len(updates)}, Missing: {errors}")
+
+    if updates:
+        upsert_batch("cards", updates)
+
+
+# ---------------------------------------------------------------------------
+# Art cards report: find all art cards in Japanese sets
+# ---------------------------------------------------------------------------
+
+def find_art_cards():
+    """Fetch all Japanese cards and identify art cards by rarity."""
+    print(f"\n{'=' * 60}")
+    print(f"Finding all art cards in {LANG.upper()} sets...")
+    print(f"{'=' * 60}")
+
+    sets_list = fetch_json(f"{TCGDEX_BASE}/sets/")
+    unique_set_ids = list(dict.fromkeys(s["id"] for s in sets_list))
+
+    art_cards: list[dict] = []
+    all_rarities: set[str] = set()
+    total_cards = 0
+
+    for i, set_id in enumerate(unique_set_ids):
+        print(f"  Scanning set {i+1}/{len(unique_set_ids)}: {set_id}...", end="\r")
+
+        try:
+            detail = fetch_json(f"{TCGDEX_BASE}/sets/{quote(set_id, safe='')}")
+        except Exception:
+            continue
+
+        set_name = detail.get("name", set_id)
+        cards = detail.get("cards", [])
+        total_cards += len(cards)
+
+        for c in cards:
+            card_id = c.get("id", "")
+            # Fetch individual card for rarity
+            try:
+                card_detail = fetch_json(f"{TCGDEX_BASE}/cards/{quote(card_id, safe='')}")
+            except Exception:
+                continue
+
+            rarity = card_detail.get("rarity", "") or ""
+            if rarity:
+                all_rarities.add(rarity)
+
+            # Check if this is an art card
+            is_art = rarity in ART_CARD_RARITIES
+
+            if is_art:
+                # Also try to get the English name
+                en_name = ""
+                try:
+                    en_detail = fetch_json(f"{TCGDEX_EN}/cards/{quote(card_id, safe='')}")
+                    en_name = en_detail.get("name", "")
+                except Exception:
+                    pass
+
+                art_cards.append({
+                    "id": card_id,
+                    "name_ja": card_detail.get("name", ""),
+                    "name_en": en_name,
+                    "set_id": set_id,
+                    "set_name": set_name,
+                    "number": card_detail.get("localId", ""),
+                    "rarity": rarity,
+                    "artist": card_detail.get("illustrator", ""),
+                    "image": card_detail.get("image", ""),
+                })
+
+            time.sleep(0.03)
+
+        time.sleep(0.1)
+
+    # Print results
+    print(f"\n\n{'=' * 60}")
+    print(f"ART CARDS REPORT")
+    print(f"{'=' * 60}")
+    print(f"Total cards scanned: {total_cards}")
+    print(f"Art cards found: {len(art_cards)}")
+    print(f"\nAll rarities encountered: {sorted(all_rarities)}")
+
+    # Group by rarity
+    by_rarity: dict[str, list] = {}
+    for ac in art_cards:
+        r = ac["rarity"]
+        by_rarity.setdefault(r, []).append(ac)
+
+    print(f"\n{'─' * 60}")
+    for rarity, cards in sorted(by_rarity.items()):
+        print(f"\n  {rarity} ({len(cards)} cards):")
+        for c in cards:
+            en = f" ({c['name_en']})" if c["name_en"] else ""
+            print(f"    #{c['number']:>4s}  {c['name_ja']}{en}  [{c['set_name']}]  by {c['artist']}")
+
+    # Save to JSON
+    output_path = ROOT / "backend" / f"art_cards_{LANG}.json"
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(art_cards, f, ensure_ascii=False, indent=2)
+    print(f"\nSaved to {output_path}")
+
+    return art_cards
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     full_mode = "--full" in sys.argv
+    art_mode = "--art-cards" in sys.argv
+
+    if art_mode:
+        find_art_cards()
+        return
 
     print("=" * 60)
     print(f"Seeding {LANG.upper()} cards from TCGdex API")
-    print(f"  Mode: {'Full (sets + cards + details)' if full_mode else 'Fast (sets + cards with images)'}")
+    print(f"  Mode: {'Full (sets + cards + details + EN names)' if full_mode else 'Fast (sets + cards with images)'}")
     print(f"  URL: {SUPABASE_URL}")
     print("=" * 60)
 
@@ -220,6 +398,7 @@ def main():
     if full_mode and cards:
         card_ids = [c["id"] for c in cards]
         phase2(card_ids)
+        phase3(cards)
 
     elapsed = time.time() - start
     print(f"\nDone in {elapsed:.1f}s")

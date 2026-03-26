@@ -7,7 +7,7 @@
  */
 
 import { supabase } from '../lib/supabase';
-import type { ScanMatch, ScanResult } from './cardScanService';
+import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
 
 // HF Space URL — update after deploying
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
@@ -51,10 +51,12 @@ async function cloudEmbedding(imageFile: File | Blob): Promise<number[] | null> 
 /**
  * Fallback: use Tesseract.js OCR to read card name, then fuzzy search.
  */
-async function ocrFallback(imageFile: File | Blob, topK: number): Promise<ScanResult> {
+async function ocrFallback(imageFile: File | Blob, topK: number, lang: ScanLanguage = 'en'): Promise<ScanResult> {
   try {
     const { createWorker } = await import('tesseract.js');
-    const worker = await createWorker('eng');
+    // For Japanese, use jpn+eng to handle mixed text (numbers, Latin chars on JP cards)
+    const tessLang = lang === 'ja' ? 'jpn+eng' : 'eng';
+    const worker = await createWorker(tessLang);
 
     const buffer = await imageFile.arrayBuffer();
     const { data } = await worker.recognize(new Uint8Array(buffer));
@@ -107,26 +109,63 @@ async function ocrFallback(imageFile: File | Blob, topK: number): Promise<ScanRe
 }
 
 /**
+ * Filter visual matches to only include cards in the requested language.
+ * Cards belonging to sets with the language suffix (e.g., "-ja") are Japanese,
+ * and cards without a suffix are English.
+ */
+function filterByLanguage(matches: ScanMatch[], lang: ScanLanguage): ScanMatch[] {
+  if (lang === 'en') {
+    // English cards don't have a language suffix in set_id
+    return matches.filter(m => !m.set_id.endsWith('-ja') && !m.set_id.endsWith('-th'));
+  }
+  // Japanese cards have set_id ending with "-ja"
+  return matches.filter(m => m.set_id.endsWith(`-${lang}`));
+}
+
+/**
+ * Enrich Japanese card matches with their English names from the name_en column.
+ */
+async function enrichWithEnglishNames(matches: ScanMatch[]): Promise<void> {
+  const jaIds = matches.filter(m => m.set_id.endsWith('-ja')).map(m => m.id);
+  if (jaIds.length === 0) return;
+
+  const { data } = await supabase
+    .from('cards')
+    .select('id, name_en')
+    .in('id', jaIds)
+    .neq('name_en', '');
+
+  if (!data) return;
+
+  const nameMap = new Map(data.map(r => [r.id, r.name_en]));
+  for (const m of matches) {
+    const en = nameMap.get(m.id);
+    if (en) m.name_en = en;
+  }
+}
+
+/**
  * Scan a card image: cloud ML model → pgvector, with OCR fallback.
  */
 export async function supabaseScan(
   imageFile: File | Blob,
   topK = 5,
+  lang: ScanLanguage = 'en',
 ): Promise<ScanResult> {
   // 1. Try cloud model
   const embedding = await cloudEmbedding(imageFile);
 
   if (embedding) {
-    // 2. Query Supabase pgvector
+    // 2. Query Supabase pgvector — fetch extra results so we can filter by language
     const embeddingStr = '[' + embedding.join(',') + ']';
 
     const { data, error } = await supabase.rpc('match_card', {
       query_embedding: embeddingStr,
-      match_count: topK,
+      match_count: topK * 3,
     });
 
     if (!error && data && data.length > 0) {
-      const matches: ScanMatch[] = data.map((row) => ({
+      const allMatches: ScanMatch[] = data.map((row) => ({
         id: row.id,
         name: row.name,
         number: row.number,
@@ -143,16 +182,22 @@ export async function supabaseScan(
         method: 'visual' as const,
       }));
 
-      return {
-        matches,
-        ocr_text: '',
-        method_used: 'visual',
-        visual_index_size: 0,
-        catalog_size: 0,
-      };
+      const matches = filterByLanguage(allMatches, lang).slice(0, topK);
+
+      if (matches.length > 0) {
+        if (lang === 'ja') await enrichWithEnglishNames(matches);
+
+        return {
+          matches,
+          ocr_text: '',
+          method_used: 'visual',
+          visual_index_size: 0,
+          catalog_size: 0,
+        };
+      }
     }
   }
 
   // 3. Fallback to OCR → fuzzy search
-  return ocrFallback(imageFile, topK);
+  return ocrFallback(imageFile, topK, lang);
 }

@@ -14,7 +14,7 @@
  *  ResNet50 + EasyOCR pipeline instead (much more accurate).
  */
 import { createWorker } from 'tesseract.js';
-import type { ScanMatch, ScanResult } from './cardScanService';
+import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
 import { catalogService } from './catalogService';
 import { visualMatchService } from './visualMatchService';
 
@@ -131,22 +131,38 @@ function preprocessBottom(imageFile: File | Blob, profile: PreprocessProfile): P
 }
 
 // ── Tesseract worker ─────────────────────────────────────────────────────────
-let _workerPromise: ReturnType<typeof createWorker> | null = null;
+let _workerPromiseEn: ReturnType<typeof createWorker> | null = null;
+let _workerPromiseJa: ReturnType<typeof createWorker> | null = null;
 
-function getWorker() {
-  if (!_workerPromise) {
-    _workerPromise = createWorker('eng', 1, {
+function getWorker(lang: ScanLanguage = 'en') {
+  if (lang === 'ja') {
+    if (!_workerPromiseJa) {
+      _workerPromiseJa = createWorker('jpn+eng', 1, {
+        workerPath: '/tesseract-worker.min.js',
+        corePath: '/tesseract-core.wasm.js',
+        langPath: '/lang',
+        logger: () => {},
+      }).catch(err => {
+        console.error('[nativeScan] Tesseract JA worker init failed:', err);
+        _workerPromiseJa = null;
+        throw err;
+      });
+    }
+    return _workerPromiseJa;
+  }
+  if (!_workerPromiseEn) {
+    _workerPromiseEn = createWorker('eng', 1, {
       workerPath: '/tesseract-worker.min.js',
       corePath: '/tesseract-core.wasm.js',
       langPath: '/lang',
       logger: () => {},
     }).catch(err => {
       console.error('[nativeScan] Tesseract worker init failed:', err);
-      _workerPromise = null;
+      _workerPromiseEn = null;
       throw err;
     });
   }
-  return _workerPromise;
+  return _workerPromiseEn;
 }
 
 // ── Text extraction ───────────────────────────────────────────────────────────
@@ -176,17 +192,37 @@ function cleanOcrText(raw: string): string {
   return text;
 }
 
-function extractNameCandidates(rawText: string): string[] {
+function extractNameCandidates(rawText: string, lang: ScanLanguage = 'en'): string[] {
   const candidates: string[] = [];
-  const cleaned = cleanOcrText(rawText);
+  const cleaned = lang === 'en' ? cleanOcrText(rawText) : rawText;
 
   const lines = cleaned
     .split('\n')
     .map(l => l.trim())
-    .filter(l => l.length >= 2 && l.length <= 50);
+    .filter(l => l.length >= 1 && l.length <= 50);
 
+  if (lang === 'ja') {
+    // For Japanese: keep CJK characters, katakana, hiragana, and Latin letters
+    for (const line of lines.slice(0, 8)) {
+      // Remove digits and special chars but keep Japanese + Latin chars
+      const norm = line
+        .replace(/[\d\s\u3000]+/g, ' ')
+        .replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEFa-zA-Z\u00C0-\u024F\s'.\-]/g, '')
+        .trim();
+      if (norm.length >= 1) candidates.push(norm);
+    }
+    // Also try full first line
+    if (lines.length > 0) {
+      const firstLine = lines[0]
+        .replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEFa-zA-Z\s]/g, '')
+        .trim();
+      if (firstLine.length >= 1) candidates.push(firstLine);
+    }
+    return [...new Set(candidates)];
+  }
+
+  // English path (unchanged)
   for (const line of lines.slice(0, 8)) {
-    // Keep only letters, spaces, hyphens, apostrophes, periods
     const norm = line.replace(/[^a-zA-Z\u00C0-\u024F\s'.\-]/g, ' ').replace(/\s+/g, ' ').trim();
     if (norm.length < 2) continue;
 
@@ -199,7 +235,6 @@ function extractNameCandidates(rawText: string): string[] {
     candidates.push(meaningful.join(' '));
   }
 
-  // Also try the full first line as-is (sometimes the whole line IS the name)
   if (lines.length > 0) {
     const firstLine = lines[0].replace(/[^a-zA-Z\u00C0-\u024F\s'.\-]/g, '').trim();
     if (firstLine.length >= 3) candidates.push(firstLine.toLowerCase());
@@ -242,8 +277,9 @@ async function ocrMultiPass(
   imageFile: File | Blob,
   profiles: PreprocessProfile[],
   cropFn: (file: File | Blob, profile: PreprocessProfile) => Promise<Blob>,
+  lang: ScanLanguage = 'en',
 ): Promise<OcrPassResult> {
-  const worker = await getWorker();
+  const worker = await getWorker(lang);
   let bestResult: OcrPassResult = { text: '', confidence: 0 };
 
   for (const profile of profiles) {
@@ -295,7 +331,7 @@ function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK:
 }
 
 // ── Main scan ─────────────────────────────────────────────────────────────────
-export async function nativeScanCard(imageFile: File | Blob, topK = 5): Promise<ScanResult> {
+export async function nativeScanCard(imageFile: File | Blob, topK = 5, lang: ScanLanguage = 'en'): Promise<ScanResult> {
   // Try backend first if configured (much more accurate)
   const backendResult = await tryBackendScan(imageFile, topK);
   if (backendResult && backendResult.matches.length > 0) {
@@ -309,14 +345,14 @@ export async function nativeScanCard(imageFile: File | Blob, topK = 5): Promise<
 
   const ocrPromise = (async () => {
     const [nameResult, bottomResult] = await Promise.all([
-      ocrMultiPass(imageFile, NAME_PROFILES, preprocessName),
-      ocrMultiPass(imageFile, BOTTOM_PROFILES, preprocessBottom),
+      ocrMultiPass(imageFile, NAME_PROFILES, preprocessName, lang),
+      ocrMultiPass(imageFile, BOTTOM_PROFILES, preprocessBottom, lang),
     ]);
 
     const ocrText = nameResult.text;
     const bottomText = bottomResult.text;
     const cardNumber = extractCardNumber(bottomText) || extractCardNumber(ocrText);
-    const nameCandidates = extractNameCandidates(ocrText);
+    const nameCandidates = extractNameCandidates(ocrText, lang);
     const nameHint = nameCandidates[0] ?? '';
 
     let ocrMatches: ScanMatch[] = [];

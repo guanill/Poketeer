@@ -4,7 +4,7 @@ import {
   Camera, Upload, X, Scan, AlertTriangle, CheckCircle,
   Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi,
 } from 'lucide-react';
-import type { ScanMatch, ScanResult } from '../services/cardScanService';
+import type { ScanMatch, ScanResult, ScanLanguage } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
 import { catalogService } from '../services/catalogService';
 import { useCollectionStore } from '../store/collectionStore';
@@ -96,6 +96,9 @@ function MatchRow({ match, rank, isTop }: { match: ScanMatch; rank: number; isTo
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-semibold text-white text-sm leading-tight truncate">{match.name}</p>
+            {match.name_en && (
+              <p className="text-xs text-blue-300/70 truncate">{match.name_en}</p>
+            )}
             <p className="text-xs text-gray-400 truncate">{match.set_name} · #{match.number}</p>
           </div>
           <MethodPill method={match.method} />
@@ -216,6 +219,9 @@ function JobCard({
           ) : topMatch ? (
             <motion.div key="match" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
               <p className="text-sm font-bold text-white truncate">{topMatch.name}</p>
+              {topMatch.name_en && (
+                <p className="text-[10px] text-blue-300/70 truncate">{topMatch.name_en}</p>
+              )}
               <p className="text-xs text-gray-500 truncate">{topMatch.set_name} · #{topMatch.number}</p>
             </motion.div>
           ) : (
@@ -352,6 +358,7 @@ export function CardScanner() {
   const [shotFlash, setShotFlash] = useState(false);
   const [serverUrl, setServerUrl] = useState(() => getBackendUrl() ?? '');
   const [serverConnected, setServerConnected] = useState<boolean | null>(null);
+  const [scanLang, setScanLang]   = useState<ScanLanguage>('en');
 
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
   const inlineStreamRef = useRef<MediaStream | null>(null);
@@ -425,7 +432,7 @@ export function CardScanner() {
     }, ...prev]);
 
     try {
-      const result = await cardScanService.scanCard(blob, 5);
+      const result = await cardScanService.scanCard(blob, 5, scanLang);
       setJobs(prev => prev.map(j =>
         j.id === id
           ? { ...j, status: 'done', matches: result.matches, result, expanded: result.matches.length > 0 }
@@ -437,7 +444,7 @@ export function CardScanner() {
         j.id === id ? { ...j, status: 'error', errorMsg: msg } : j
       ));
     }
-  }, [uid]);
+  }, [uid, scanLang]);
 
   const captureInlineFrame = useCallback(() => {
     const video = inlineVideoRef.current;
@@ -573,6 +580,33 @@ export function CardScanner() {
             </div>
           </div>
         )}
+
+        {/* Language selector */}
+        <div className="flex items-center gap-2 p-2 rounded-xl bg-white/3 border border-white/8">
+          <span className="text-xs font-semibold text-gray-400 ml-1">Scan language:</span>
+          <div className="flex gap-1 flex-1">
+            <button
+              onClick={() => setScanLang('en')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                scanLang === 'en'
+                  ? 'bg-amber-400/15 text-amber-400 border border-amber-400/30'
+                  : 'bg-white/5 text-gray-500 border border-white/8 hover:text-gray-300'
+              }`}
+            >
+              <span className="text-sm">🇬🇧</span> English
+            </button>
+            <button
+              onClick={() => setScanLang('ja')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                scanLang === 'ja'
+                  ? 'bg-red-400/15 text-red-400 border border-red-400/30'
+                  : 'bg-white/5 text-gray-500 border border-white/8 hover:text-gray-300'
+              }`}
+            >
+              <span className="text-sm">🇯🇵</span> Japanese
+            </button>
+          </div>
+        </div>
 
         {/* ---- MOBILE: inline camera feed + upload, fits viewport ---- */}
         {isMobile && mode !== 'error' && (

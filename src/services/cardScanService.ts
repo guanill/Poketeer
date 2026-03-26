@@ -2,9 +2,12 @@ import { isNativePlatform } from '../utils/platform';
 import { nativeScanCard, nativeCheckHealth } from './nativeScanService';
 import { supabaseScan } from './supabaseScanService';
 
+export type ScanLanguage = 'en' | 'ja';
+
 export interface ScanMatch {
   id: string;
   name: string;
+  name_en?: string;
   number: string;
   set_id: string;
   set_name: string;
@@ -44,11 +47,11 @@ export const cardScanService = {
    * Pipeline (native / mobile):
    *   Same as web, with Tesseract OCR as a supplementary signal.
    */
-  async scanCard(imageFile: File | Blob, topK = 5): Promise<ScanResult> {
-    if (isNativePlatform()) return nativeScanCard(imageFile, topK);
+  async scanCard(imageFile: File | Blob, topK = 5, lang: ScanLanguage = 'en'): Promise<ScanResult> {
+    if (isNativePlatform()) return nativeScanCard(imageFile, topK, lang);
 
     // Web: on-device ONNX → Supabase pgvector
-    return supabaseScan(imageFile, topK);
+    return supabaseScan(imageFile, topK, lang);
   },
 
   async getIndexStats(): Promise<IndexStats> {
