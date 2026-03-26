@@ -143,6 +143,9 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
               <div className="flex-1 min-w-0">
                 <div>
                   <h2 className="text-xl font-black text-white leading-tight">{card.name}</h2>
+                  {card.name_en && (
+                    <p className="text-sm text-blue-300/70 mt-0.5">{card.name_en}</p>
+                  )}
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className="text-sm font-semibold" style={{ color: rarityColor }}>{card.rarity ?? 'Common'}</span>
                     <span className="text-xs text-gray-600">·</span>

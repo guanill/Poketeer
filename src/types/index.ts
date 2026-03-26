@@ -40,6 +40,7 @@ export interface CardTCGPlayer {
 export interface PokemonCard {
   id: string;
   name: string;
+  name_en?: string;
   supertype: string;
   subtypes?: string[];
   hp?: string;

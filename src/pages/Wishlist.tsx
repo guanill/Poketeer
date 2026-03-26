@@ -337,6 +337,9 @@ export function Wishlist() {
                     <p className="text-sm font-bold text-white truncate">
                       {card?.name ?? item.cardId}
                     </p>
+                    {card?.name_en && (
+                      <p className="text-xs text-blue-300/60 truncate">{card.name_en}</p>
+                    )}
                     <div className="flex items-center gap-2 mt-0.5">
                       <span
                         className="text-xs font-bold px-1.5 py-0.5 rounded-full"

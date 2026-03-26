@@ -59,6 +59,7 @@ function rowToSet(row: {
 function rowToCard(row: {
   id: string;
   name: string;
+  name_en?: string;
   number: string;
   set_id: string;
   rarity: string;
@@ -81,6 +82,7 @@ function rowToCard(row: {
   return {
     id: row.id,
     name: row.name,
+    name_en: row.name_en || undefined,
     number: row.number,
     supertype: row.supertype,
     subtypes: row.subtypes,
@@ -210,6 +212,7 @@ export const pokemonTCGService = {
     const cards: PokemonCard[] = trimmed.map((row) => ({
       id: row.id,
       name: row.name,
+      name_en: row.name_en || undefined,
       number: row.number,
       supertype: row.supertype,
       subtypes: row.subtypes,

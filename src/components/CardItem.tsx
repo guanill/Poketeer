@@ -137,6 +137,9 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
       {/* Card Info */}
       <div className="px-2 pb-10">
         <p className="text-xs font-bold text-white truncate text-center leading-tight">{card.name}</p>
+        {card.name_en && (
+          <p className="text-[10px] text-blue-300/60 truncate text-center leading-tight">{card.name_en}</p>
+        )}
         <div className="flex items-center justify-center gap-1 mt-0.5">
           <span className="text-xs" style={{ color: rarityColor }}>
             {card.rarity ?? 'Common'}
