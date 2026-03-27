@@ -249,6 +249,14 @@ function JobCard({
           {job.status === 'error' && (
             <p className="text-[10px] text-gray-500 mt-0.5 truncate">{job.errorMsg}</p>
           )}
+          {job.status === 'done' && rawOcrText && (
+            <p className="text-[10px] text-gray-600 mt-0.5 truncate" title={rawOcrText}>
+              Read: <span className="text-gray-500">{ocrHint || rawOcrText.split('\n')[0]}</span>
+              {rawOcrText.includes('[bottom]') && (
+                <span className="text-gray-600"> · #{rawOcrText.split('[bottom]')[1]?.trim().split('\n')[0]}</span>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">

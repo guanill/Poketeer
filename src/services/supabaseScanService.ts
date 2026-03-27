@@ -2,8 +2,8 @@
  * Supabase-backed card scanning.
  *
  * Pipeline:
- *   1. Crop top 25% of card image → OCR the name
- *   2. Crop bottom 12% → OCR the card number
+ *   1. Crop top 25% of card image → multi-pass OCR the name (3 contrast profiles)
+ *   2. Crop bottom 12% → multi-pass OCR the card number (2 profiles)
  *   3. Search by number first (most accurate), then fuzzy name search
  *   4. Optional: if cloud embedding model is up, boost/merge with visual matches
  */
@@ -62,25 +62,76 @@ function cropRegion(
   });
 }
 
-/** Crop the top 25% of the card (where the name lives). */
-function cropNameRegion(imageFile: File | Blob): Promise<Blob> {
-  return cropRegion(imageFile, 0, 0.25, 'grayscale(1) contrast(1.8) brightness(1.1)', 2);
-}
+// Multiple preprocessing profiles to handle different card surfaces (foil, holo, normal)
+const NAME_PROFILES = [
+  { label: 'balanced',      filter: 'grayscale(1) contrast(1.8) brightness(1.1)' },
+  { label: 'high-contrast', filter: 'grayscale(1) contrast(2.8) brightness(1.2)' },
+  { label: 'low-contrast',  filter: 'grayscale(1) contrast(1.3) brightness(1.0)' },
+];
 
-/** Crop the bottom 12% of the card (where the card number lives). */
-function cropNumberRegion(imageFile: File | Blob): Promise<Blob> {
-  return cropRegion(imageFile, 0.88, 1, 'grayscale(1) contrast(2.5) brightness(1.15)', 3);
-}
+const NUMBER_PROFILES = [
+  { label: 'balanced',      filter: 'grayscale(1) contrast(2.5) brightness(1.15)' },
+  { label: 'high-contrast', filter: 'grayscale(1) contrast(3.5) brightness(1.3)' },
+];
 
-// ── OCR ──────────────────────────────────────────────────────────────────────
+// ── Tesseract worker (reused across scans) ───────────────────────────────────
 
-async function ocrBlob(blob: Blob, lang: ScanLanguage): Promise<string> {
+type TessWorker = Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>>;
+let _workerEn: TessWorker | null = null;
+let _workerJa: TessWorker | null = null;
+
+async function getWorker(lang: ScanLanguage): Promise<TessWorker> {
   const { createWorker } = await import('tesseract.js');
-  const tessLang = lang === 'ja' ? 'jpn+eng' : 'eng';
-  const worker = await createWorker(tessLang);
-  const { data } = await worker.recognize(blob);
-  await worker.terminate();
-  return data.text.trim();
+
+  if (lang === 'ja') {
+    if (!_workerJa) _workerJa = await createWorker('jpn+eng');
+    return _workerJa;
+  }
+  if (!_workerEn) _workerEn = await createWorker('eng');
+  return _workerEn;
+}
+
+// ── Multi-pass OCR ───────────────────────────────────────────────────────────
+
+interface OcrResult {
+  text: string;
+  confidence: number;
+}
+
+/**
+ * Try multiple contrast profiles on a cropped region and return the best OCR result.
+ * Stops early if confidence > 80%.
+ */
+async function ocrMultiPass(
+  imageFile: File | Blob,
+  cropTop: number,
+  cropBottom: number,
+  scale: number,
+  profiles: { label: string; filter: string }[],
+  lang: ScanLanguage,
+): Promise<OcrResult> {
+  const worker = await getWorker(lang);
+  let best: OcrResult = { text: '', confidence: 0 };
+
+  for (const profile of profiles) {
+    try {
+      const blob = await cropRegion(imageFile, cropTop, cropBottom, profile.filter, scale);
+      const { data } = await worker.recognize(blob);
+      const text = (data.text ?? '').trim();
+      const conf = data.confidence ?? 0;
+
+      if (conf > best.confidence && text.length > 0) {
+        best = { text, confidence: conf };
+      }
+
+      // High confidence — no need to try more profiles
+      if (conf > 80) break;
+    } catch {
+      // Continue to next profile
+    }
+  }
+
+  return best;
 }
 
 // ── Text extraction helpers ──────────────────────────────────────────────────
@@ -105,7 +156,6 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
   if (lines.length === 0) return '';
 
   if (lang === 'ja') {
-    // Keep CJK + katakana + hiragana + Latin chars, drop noise
     for (const line of lines.slice(0, 4)) {
       const clean = line
         .replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEFa-zA-Z\s'.\-]/g, '')
@@ -115,7 +165,6 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
     return lines[0];
   }
 
-  // English: take first meaningful line, strip non-alpha noise
   for (const line of lines.slice(0, 4)) {
     const clean = line.replace(/[^a-zA-Z\u00C0-\u024F\s'.\-]/g, ' ').replace(/\s+/g, ' ').trim();
     if (clean.length >= 2) return clean;
@@ -132,13 +181,11 @@ async function searchByNumber(
   topK: number,
   lang: ScanLanguage,
 ): Promise<ScanMatch[]> {
-  // Search for the number across all cards
   let query = supabase
     .from('cards')
     .select('*, sets!inner(id, name, series, language)')
     .eq('number', cardNumber);
 
-  // Filter by language
   if (lang === 'ja') {
     query = query.eq('sets.language', 'ja');
   } else {
@@ -148,7 +195,6 @@ async function searchByNumber(
   const { data, error } = await query.limit(topK * 2);
   if (error || !data || data.length === 0) return [];
 
-  // If we have a name hint, sort by similarity to it
   const results = data.map(row => ({
     id: row.id as string,
     name: row.name as string,
@@ -163,11 +209,10 @@ async function searchByNumber(
     subtypes: row.subtypes as string[],
     hp: row.hp as string,
     artist: (row.artist as string) ?? '',
-    confidence: 0.85, // Number match = high base confidence
+    confidence: 0.85,
     method: 'ocr' as const,
   }));
 
-  // Boost cards whose name matches the hint
   if (nameHint) {
     const hint = nameHint.toLowerCase();
     for (const r of results) {
@@ -196,7 +241,6 @@ async function searchByName(
 
   if (error || !data) return [];
 
-  // Filter by language
   const filtered = data.filter(row => {
     if (lang === 'ja') return row.set_id.endsWith('-ja');
     return !row.set_id.endsWith('-ja') && !row.set_id.endsWith('-th');
@@ -271,7 +315,6 @@ async function tryVisualMatch(
       method: 'visual' as const,
     }));
 
-    // Filter by language
     if (lang === 'en') {
       return allMatches.filter(m => !m.set_id.endsWith('-ja') && !m.set_id.endsWith('-th'));
     }
@@ -308,7 +351,7 @@ function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK:
 
 /**
  * Scan a card image:
- *   1. Crop top 25% → OCR name, crop bottom 12% → OCR number
+ *   1. Crop top 25% → multi-pass OCR name, crop bottom 12% → multi-pass OCR number
  *   2. Search by number (most accurate) or fuzzy name search
  *   3. Optionally boost with visual embedding if cloud model is available
  */
@@ -317,24 +360,21 @@ export async function supabaseScan(
   topK = 5,
   lang: ScanLanguage = 'en',
 ): Promise<ScanResult> {
-  // 1. Crop and OCR name + number regions in parallel
-  let nameText = '';
-  let numberText = '';
+  // 1. Multi-pass OCR on name and number regions in parallel
+  let nameResult: OcrResult = { text: '', confidence: 0 };
+  let numberResult: OcrResult = { text: '', confidence: 0 };
 
   try {
-    const [nameCrop, numberCrop] = await Promise.all([
-      cropNameRegion(imageFile),
-      cropNumberRegion(imageFile),
-    ]);
-
-    [nameText, numberText] = await Promise.all([
-      ocrBlob(nameCrop, lang),
-      ocrBlob(numberCrop, lang),
+    [nameResult, numberResult] = await Promise.all([
+      ocrMultiPass(imageFile, 0, 0.25, 2, NAME_PROFILES, lang),
+      ocrMultiPass(imageFile, 0.88, 1, 3, NUMBER_PROFILES, lang),
     ]);
   } catch (err) {
     console.warn('[supabaseScan] Crop/OCR failed:', err);
   }
 
+  const nameText = nameResult.text;
+  const numberText = numberResult.text;
   const ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
   const cardNumber = extractCardNumber(numberText) || extractCardNumber(nameText);
   const nameQuery = extractNameQuery(nameText, lang);
@@ -350,7 +390,7 @@ export async function supabaseScan(
     ocrMatches = await searchByName(nameQuery, topK, lang);
   }
 
-  // 3. Try visual matching in parallel (non-blocking — if it fails, we still have OCR)
+  // 3. Try visual matching in parallel (non-blocking)
   const visualMatches = await tryVisualMatch(imageFile, topK, lang).catch(() => [] as ScanMatch[]);
 
   // 4. Merge results
