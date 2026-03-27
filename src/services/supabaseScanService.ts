@@ -14,14 +14,6 @@ import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
 // HF Space URL for optional visual embedding boost
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
 
-const EMPTY_RESULT: ScanResult = {
-  matches: [],
-  ocr_text: '',
-  method_used: 'none',
-  visual_index_size: 0,
-  catalog_size: 0,
-};
-
 // ── Image cropping ───────────────────────────────────────────────────────────
 
 function cropRegion(
