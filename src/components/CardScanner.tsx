@@ -489,10 +489,21 @@ export function CardScanner() {
     setShotFlash(true);
     setTimeout(() => setShotFlash(false), 180);
 
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    // Crop to the card guide area (60% width, 2.5:3.5 aspect ratio, centered)
+    const cardW = Math.floor(vw * 0.60);
+    const cardH = Math.floor(cardW * (3.5 / 2.5));
+    const cardX = Math.floor((vw - cardW) / 2);
+    const cardY = Math.floor((vh - cardH) / 2);
+
     const canvas = document.createElement('canvas');
-    canvas.width  = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')!.drawImage(video, 0, 0);
+    canvas.width = cardW;
+    canvas.height = cardH;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+
     canvas.toBlob(blob => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
