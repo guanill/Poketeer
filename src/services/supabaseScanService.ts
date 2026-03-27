@@ -88,6 +88,8 @@ async function getWorker(lang: ScanLanguage): Promise<TessWorker> {
 interface OcrResult {
   text: string;
   confidence: number;
+  /** The cropped+filtered image blob that produced the best result */
+  cropBlob?: Blob;
 }
 
 /**
@@ -113,7 +115,7 @@ async function ocrMultiPass(
       const conf = data.confidence ?? 0;
 
       if (conf > best.confidence && text.length > 0) {
-        best = { text, confidence: conf };
+        best = { text, confidence: conf, cropBlob: blob };
       }
 
       // High confidence — no need to try more profiles
@@ -413,11 +415,17 @@ export async function supabaseScan(
     ? 'combined'
     : visualMatches.length > 0 ? 'visual' : ocrMatches.length > 0 ? 'ocr' : 'none';
 
+  // Create object URLs for crop previews so the UI can show what was read
+  const cropNameUrl = nameResult.cropBlob ? URL.createObjectURL(nameResult.cropBlob) : undefined;
+  const cropNumberUrl = numberResult.cropBlob ? URL.createObjectURL(numberResult.cropBlob) : undefined;
+
   return {
     matches,
     ocr_text: ocrText,
     method_used: methodUsed as ScanResult['method_used'],
     visual_index_size: visualMatches.length,
     catalog_size: 0,
+    cropNameUrl,
+    cropNumberUrl,
   };
 }

@@ -28,6 +28,10 @@ export interface ScanResult {
   method_used: 'ocr' | 'visual' | 'combined' | 'none';
   visual_index_size: number;
   catalog_size: number;
+  /** Debug: object URL of the cropped name region fed to OCR */
+  cropNameUrl?: string;
+  /** Debug: object URL of the cropped number region fed to OCR */
+  cropNumberUrl?: string;
 }
 
 export interface IndexStats {

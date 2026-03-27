@@ -277,6 +277,35 @@ function JobCard({
         </div>
       </div>
 
+      {/* OCR crop previews — shows what regions the scanner read */}
+      {job.status === 'done' && (job.result?.cropNameUrl || job.result?.cropNumberUrl) && (
+        <div className="px-3 pb-2 border-t border-white/5 pt-2">
+          <p className="text-[10px] text-gray-600 font-semibold mb-1.5">What the scanner sees:</p>
+          <div className="flex gap-2">
+            {job.result?.cropNameUrl && (
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] text-gray-600 mb-0.5">Name region (top 25%)</p>
+                <img
+                  src={job.result.cropNameUrl}
+                  alt="Name crop"
+                  className="w-full rounded border border-white/10 bg-black"
+                />
+              </div>
+            )}
+            {job.result?.cropNumberUrl && (
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] text-gray-600 mb-0.5">Number region (bottom 12%)</p>
+                <img
+                  src={job.result.cropNumberUrl}
+                  alt="Number crop"
+                  className="w-full rounded border border-white/10 bg-black"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Manual search fallback */}
       <AnimatePresence>
         {needsManual && (
