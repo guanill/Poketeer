@@ -64,6 +64,7 @@ const NAME_PROFILES = [
 const NUMBER_PROFILES = [
   { label: 'balanced',      filter: 'grayscale(1) contrast(2.5) brightness(1.15)' },
   { label: 'high-contrast', filter: 'grayscale(1) contrast(3.5) brightness(1.3)' },
+  { label: 'inverted',      filter: 'grayscale(1) contrast(2.0) brightness(1.4) invert(1)' },
 ];
 
 // ── Tesseract worker (reused across scans) ───────────────────────────────────
@@ -132,14 +133,29 @@ async function ocrMultiPass(
 
 /** Extract a card number like "4/102", "025/172", "SWSH025" from OCR text. */
 function extractCardNumber(text: string): string | null {
-  const slashMatch = text.match(/([A-Z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Z0-9]+/i);
+  // Normalize common OCR misreads in number context
+  const cleaned = text
+    .replace(/[oO]/g, '0')   // O → 0 in number regions
+    .replace(/[lI]/g, '1')   // l/I → 1
+    .replace(/[sS]/g, '5')   // S → 5
+    .replace(/[—–-]+/g, '/') // dashes → slash
+    .replace(/\s+/g, ' ');
+
+  // Pattern A: "4/102", "025/172", "TG30/TG30"
+  const slashMatch = cleaned.match(/([A-Z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Z0-9]+/i);
   if (slashMatch) return slashMatch[1].replace(/^0+(?=\d)/, '').toLowerCase();
 
-  const promoMatch = text.match(/\b([A-Z]{2,4}\d{3,4})\b/i);
+  // Pattern B: standalone promo codes like "SWSH025"
+  const promoMatch = cleaned.match(/\b([A-Z]{2,4}\d{3,4})\b/i);
   if (promoMatch) return promoMatch[1].replace(/^0+(?=\d)/, '').toLowerCase();
 
-  const bareNum = text.match(/\b(\d{1,4})\s*[/\\|]/);
+  // Pattern C: bare number near a slash
+  const bareNum = cleaned.match(/\b(\d{1,4})\s*[/\\|]/);
   if (bareNum) return bareNum[1].replace(/^0+(?=\d)/, '');
+
+  // Pattern D: just a number at the start/end of text (last resort)
+  const anyNum = cleaned.match(/\b(\d{1,4})\b/);
+  if (anyNum && anyNum[1].length >= 1) return anyNum[1].replace(/^0+(?=\d)/, '');
 
   return null;
 }
@@ -168,28 +184,42 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
 
 // ── Supabase search helpers ──────────────────────────────────────────────────
 
-/** Search cards by number + optional name hint. */
+/** Search cards by number + optional name hint. Tries multiple number formats. */
 async function searchByNumber(
   cardNumber: string,
   nameHint: string,
   topK: number,
   lang: ScanLanguage,
 ): Promise<ScanMatch[]> {
-  let query = supabase
-    .from('cards')
-    .select('*, sets!inner(id, name, series, language)')
-    .eq('number', cardNumber);
-
-  if (lang === 'ja') {
-    query = query.eq('sets.language', 'ja');
-  } else {
-    query = query.eq('sets.language', 'en');
+  // Try the number as-is + zero-padded to 3 digits (e.g. "5" → "005", "25" → "025")
+  const variants = new Set<string>([cardNumber]);
+  const numOnly = cardNumber.replace(/\D/g, '');
+  if (numOnly.length > 0) {
+    variants.add(numOnly);
+    variants.add(numOnly.padStart(3, '0'));
+    variants.add(numOnly.padStart(2, '0'));
   }
 
-  const { data, error } = await query.limit(topK * 2);
-  if (error || !data || data.length === 0) return [];
+  const langFilter = lang === 'ja' ? 'ja' : 'en';
+  let allRows: Array<Record<string, unknown>> = [];
 
-  const results = data.map(row => ({
+  for (const num of variants) {
+    const { data, error } = await supabase
+      .from('cards')
+      .select('*, sets!inner(id, name, series, language)')
+      .eq('number', num)
+      .eq('sets.language', langFilter)
+      .limit(topK * 3);
+
+    if (!error && data && data.length > 0) {
+      allRows = data;
+      break; // Found matches, stop trying variants
+    }
+  }
+
+  if (allRows.length === 0) return [];
+
+  const results = allRows.map(row => ({
     id: row.id as string,
     name: row.name as string,
     name_en: (row.name_en as string) || undefined,
@@ -207,18 +237,19 @@ async function searchByNumber(
     method: 'ocr' as const,
   }));
 
-  if (nameHint) {
+  // Use name hint to rank — if name matches, boost confidence significantly
+  if (nameHint && nameHint.length >= 2) {
     const hint = nameHint.toLowerCase();
     for (const r of results) {
       const name = r.name.toLowerCase();
       const nameEn = (r.name_en ?? '').toLowerCase();
-      if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint)) {
+      if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
         r.confidence = 0.95;
       }
     }
-    results.sort((a, b) => b.confidence - a.confidence);
   }
 
+  results.sort((a, b) => b.confidence - a.confidence);
   return results.slice(0, topK);
 }
 
@@ -361,7 +392,7 @@ export async function supabaseScan(
   try {
     [nameResult, numberResult] = await Promise.all([
       ocrMultiPass(imageFile, 0, 0.25, 2, NAME_PROFILES, lang),
-      ocrMultiPass(imageFile, 0.88, 1, 3, NUMBER_PROFILES, lang),
+      ocrMultiPass(imageFile, 0.85, 1, 3, NUMBER_PROFILES, lang),  // 15% from bottom
     ]);
   } catch (err) {
     console.warn('[supabaseScan] Crop/OCR failed:', err);
@@ -370,7 +401,11 @@ export async function supabaseScan(
   const nameText = nameResult.text;
   const numberText = numberResult.text;
   const ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
-  const cardNumber = extractCardNumber(numberText) || extractCardNumber(nameText);
+
+  // Try extracting number from bottom region first, then name region, then both combined
+  const cardNumber = extractCardNumber(numberText)
+    || extractCardNumber(nameText)
+    || extractCardNumber(nameText + ' ' + numberText);
   const nameQuery = extractNameQuery(nameText, lang);
 
   // 2. Search by number first (most reliable), then by name
@@ -380,8 +415,20 @@ export async function supabaseScan(
     ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, lang);
   }
 
+  // If number search failed or no number found, try name search
   if (ocrMatches.length === 0 && nameQuery.length >= 1) {
     ocrMatches = await searchByName(nameQuery, topK, lang);
+  }
+
+  // Last resort: if both failed, try OCR on a larger bottom chunk (bottom 20%)
+  if (ocrMatches.length === 0) {
+    try {
+      const wideBottom = await ocrMultiPass(imageFile, 0.80, 1, 3, NUMBER_PROFILES, lang);
+      const wideNumber = extractCardNumber(wideBottom.text);
+      if (wideNumber) {
+        ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, lang);
+      }
+    } catch { /* ignore */ }
   }
 
   // 3. Try visual matching in parallel (non-blocking)
