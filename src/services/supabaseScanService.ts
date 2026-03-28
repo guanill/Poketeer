@@ -385,14 +385,17 @@ export async function supabaseScan(
   topK = 5,
   lang: ScanLanguage = 'en',
 ): Promise<ScanResult> {
-  // 1. Multi-pass OCR on name and number regions in parallel
+  // 1. Start visual matching immediately (runs in parallel with OCR)
+  const visualPromise = tryVisualMatch(imageFile, topK, lang).catch(() => [] as ScanMatch[]);
+
+  // 2. Multi-pass OCR on name and number regions in parallel
   let nameResult: OcrResult = { text: '', confidence: 0 };
   let numberResult: OcrResult = { text: '', confidence: 0 };
 
   try {
     [nameResult, numberResult] = await Promise.all([
       ocrMultiPass(imageFile, 0, 0.25, 2, NAME_PROFILES, lang),
-      ocrMultiPass(imageFile, 0.85, 1, 3, NUMBER_PROFILES, lang),  // 15% from bottom
+      ocrMultiPass(imageFile, 0.85, 1, 3, NUMBER_PROFILES, lang),
     ]);
   } catch (err) {
     console.warn('[supabaseScan] Crop/OCR failed:', err);
@@ -402,25 +405,23 @@ export async function supabaseScan(
   const numberText = numberResult.text;
   const ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
 
-  // Try extracting number from bottom region first, then name region, then both combined
   const cardNumber = extractCardNumber(numberText)
     || extractCardNumber(nameText)
     || extractCardNumber(nameText + ' ' + numberText);
   const nameQuery = extractNameQuery(nameText, lang);
 
-  // 2. Search by number first (most reliable), then by name
+  // 3. Search by number first (most reliable), then by name
   let ocrMatches: ScanMatch[] = [];
 
   if (cardNumber) {
     ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, lang);
   }
 
-  // If number search failed or no number found, try name search
   if (ocrMatches.length === 0 && nameQuery.length >= 1) {
     ocrMatches = await searchByName(nameQuery, topK, lang);
   }
 
-  // Last resort: if both failed, try OCR on a larger bottom chunk (bottom 20%)
+  // Retry with wider bottom crop (20%) if nothing found yet
   if (ocrMatches.length === 0) {
     try {
       const wideBottom = await ocrMultiPass(imageFile, 0.80, 1, 3, NUMBER_PROFILES, lang);
@@ -431,10 +432,24 @@ export async function supabaseScan(
     } catch { /* ignore */ }
   }
 
-  // 3. Try visual matching in parallel (non-blocking)
-  const visualMatches = await tryVisualMatch(imageFile, topK, lang).catch(() => [] as ScanMatch[]);
+  // Last resort: OCR the full image (handles desktop uploads without card guide crop)
+  if (ocrMatches.length === 0) {
+    try {
+      const fullResult = await ocrMultiPass(imageFile, 0, 1, 1, NAME_PROFILES.slice(0, 1), lang);
+      const fullNumber = extractCardNumber(fullResult.text);
+      const fullName = extractNameQuery(fullResult.text, lang);
+      if (fullNumber) {
+        ocrMatches = await searchByNumber(fullNumber, fullName, topK, lang);
+      }
+      if (ocrMatches.length === 0 && fullName.length >= 2) {
+        ocrMatches = await searchByName(fullName, topK, lang);
+      }
+    } catch { /* ignore */ }
+  }
 
-  // 4. Merge results
+  // 4. Await visual results and merge
+  const visualMatches = await visualPromise;
+
   const matches = visualMatches.length > 0
     ? mergeResults(ocrMatches, visualMatches, topK)
     : ocrMatches;
@@ -462,7 +477,6 @@ export async function supabaseScan(
     ? 'combined'
     : visualMatches.length > 0 ? 'visual' : ocrMatches.length > 0 ? 'ocr' : 'none';
 
-  // Create object URLs for crop previews so the UI can show what was read
   const cropNameUrl = nameResult.cropBlob ? URL.createObjectURL(nameResult.cropBlob) : undefined;
   const cropNumberUrl = numberResult.cropBlob ? URL.createObjectURL(numberResult.cropBlob) : undefined;
 
