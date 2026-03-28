@@ -285,7 +285,7 @@ function JobCard({
           <div className="flex gap-2">
             {job.result?.cropNameUrl && (
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] text-gray-600 mb-0.5">Name region (top 25%)</p>
+                <p className="text-[9px] text-gray-600 mb-0.5">Name region</p>
                 <img
                   src={job.result.cropNameUrl}
                   alt="Name crop"
@@ -295,7 +295,7 @@ function JobCard({
             )}
             {job.result?.cropNumberUrl && (
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] text-gray-600 mb-0.5">Number region (bottom 12%)</p>
+                <p className="text-[9px] text-gray-600 mb-0.5">Number region</p>
                 <img
                   src={job.result.cropNumberUrl}
                   alt="Number crop"

@@ -140,28 +140,32 @@ async function ocrMultiPass(
 
 /** Extract a card number like "4/102", "025/172", "SWSH025" from OCR text. */
 function extractCardNumber(text: string): string | null {
-  // Normalize common OCR misreads in number context
-  const cleaned = text
-    .replace(/[oO]/g, '0')   // O → 0 in number regions
-    .replace(/[lI]/g, '1')   // l/I → 1
-    .replace(/[sS]/g, '5')   // S → 5
-    .replace(/[—–-]+/g, '/') // dashes → slash
-    .replace(/\s+/g, ' ');
+  // First try matching on the raw text (before aggressive substitutions)
+  const raw = text.replace(/[—–-]+/g, '/').replace(/\s+/g, ' ');
 
   // Pattern A: "4/102", "025/172", "TG30/TG30"
-  const slashMatch = cleaned.match(/([A-Z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Z0-9]+/i);
-  if (slashMatch) return slashMatch[1].replace(/^0+(?=\d)/, '').toLowerCase();
+  const slashRaw = raw.match(/([A-Za-z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Za-z0-9]+/);
+  if (slashRaw) return slashRaw[1].replace(/^0+(?=\d)/, '').toLowerCase();
 
-  // Pattern B: standalone promo codes like "SWSH025"
-  const promoMatch = cleaned.match(/\b([A-Z]{2,4}\d{3,4})\b/i);
+  // Pattern B: bare number near a slash
+  const bareRaw = raw.match(/\b(\d{1,4})\s*[/\\|]/);
+  if (bareRaw) return bareRaw[1].replace(/^0+(?=\d)/, '');
+
+  // Now try with OCR misread corrections (only within digit-heavy segments)
+  const cleaned = raw
+    .replace(/(?<=\d)[oO]|[oO](?=\d)/g, '0')  // O→0 only next to digits
+    .replace(/(?<=\d)[lI]|[lI](?=\d)/g, '1')   // l/I→1 only next to digits
+    .replace(/(?<=\d)[sS]|[sS](?=\d)/g, '5');  // S→5 only next to digits
+
+  const slashFixed = cleaned.match(/([A-Za-z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Za-z0-9]+/);
+  if (slashFixed) return slashFixed[1].replace(/^0+(?=\d)/, '').toLowerCase();
+
+  // Pattern C: standalone promo codes like "SWSH025"
+  const promoMatch = raw.match(/\b([A-Z]{2,4}\d{3,4})\b/i);
   if (promoMatch) return promoMatch[1].replace(/^0+(?=\d)/, '').toLowerCase();
 
-  // Pattern C: bare number near a slash
-  const bareNum = cleaned.match(/\b(\d{1,4})\s*[/\\|]/);
-  if (bareNum) return bareNum[1].replace(/^0+(?=\d)/, '');
-
-  // Pattern D: just a number at the start/end of text (last resort)
-  const anyNum = cleaned.match(/\b(\d{1,4})\b/);
+  // Pattern D: just a number (last resort)
+  const anyNum = raw.match(/\b(\d{1,4})\b/);
   if (anyNum && anyNum[1].length >= 1) return anyNum[1].replace(/^0+(?=\d)/, '');
 
   return null;
@@ -175,7 +179,7 @@ function extractSetHint(text: string): string {
 }
 
 /** Lines that are card metadata, not the card name. */
-const JUNK_NAME_RE = /^(stage\s*[0-9]|basic|mega|break|v-?star|v-?max|v-?union|gx|ex|lv\.\s*x|restored|legend|item|trainer|supporter|stadium|energy|tool|\u305F\u306D|\u305F\u3093\u3044)/i;
+const JUNK_NAME_RE = /^(stage\s*[0-9]|basic|mega|break|v-?star|v-?max|v-?union|gx|ex|lv\.\s*x|restored|legend|item|trainer|supporter|stadium|energy|tool|たね|たねポケモン|1進化|2進化|進化|トレーナーズ|サポート|グッズ|スタジアム|エネルギー|ポケモンのどうぐ|ポケモン[VＶ]|BREAK|メガシンカ|M進化)/i;
 
 /** Extract the card name from OCR text, handling both EN and JA. */
 function extractNameQuery(text: string, lang: ScanLanguage): string {
@@ -430,9 +434,12 @@ export async function supabaseScan(
   let numberResult: OcrResult = { text: '', confidence: 0 };
 
   try {
+    // Name: crop 3%-18% from top (skips the very top edge, captures name line)
+    // Number: crop 88%-97% from top (bottom strip with card number)
+    // Scale 3x for both — Tesseract needs decent resolution
     [nameResult, numberResult] = await Promise.all([
-      ocrMultiPass(imageFile, 0, 0.25, 2, NAME_PROFILES, lang),
-      ocrMultiPass(imageFile, 0.85, 1, 3, NUMBER_PROFILES, lang),
+      ocrMultiPass(imageFile, 0.03, 0.18, 3, NAME_PROFILES, lang),
+      ocrMultiPass(imageFile, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
     ]);
   } catch (err) {
     console.warn('[supabaseScan] Crop/OCR failed:', err);
@@ -448,6 +455,10 @@ export async function supabaseScan(
   const nameQuery = extractNameQuery(nameText, lang);
   const setHint = extractSetHint(numberText);
 
+  console.log('[scan] name OCR:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
+  console.log('[scan] number OCR:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
+  console.log('[scan] extracted → number:', cardNumber, '| name:', nameQuery, '| set:', setHint);
+
   // 3. Search by number first (most reliable), then by name
   let ocrMatches: ScanMatch[] = [];
 
@@ -459,10 +470,10 @@ export async function supabaseScan(
     ocrMatches = await searchByName(nameQuery, topK, lang);
   }
 
-  // Retry with wider bottom crop (20%) if nothing found yet
+  // Retry with wider bottom crop (bottom 25%) if nothing found yet
   if (ocrMatches.length === 0) {
     try {
-      const wideBottom = await ocrMultiPass(imageFile, 0.80, 1, 3, NUMBER_PROFILES, lang);
+      const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, lang);
       const wideNumber = extractCardNumber(wideBottom.text);
       if (wideNumber) {
         ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, lang);
