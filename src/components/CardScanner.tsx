@@ -4,29 +4,15 @@ import {
   Camera, Upload, X, Scan, AlertTriangle, CheckCircle,
   Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi,
 } from 'lucide-react';
-import type { ScanMatch, ScanResult, ScanLanguage } from '../services/cardScanService';
+import type { ScanMatch } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
 import { preloadWorker } from '../services/supabaseScanService';
 import { catalogService } from '../services/catalogService';
 import { useCollectionStore } from '../store/collectionStore';
+import { useScanStore } from '../store/scanStore';
+import type { ScanJob } from '../store/scanStore';
 import { isNativePlatform } from '../utils/platform';
 import { setBackendUrl, getBackendUrl } from '../services/nativeScanService';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type JobStatus = 'scanning' | 'done' | 'error';
-
-interface ScanJob {
-  id: string;
-  previewUrl: string;
-  status: JobStatus;
-  matches: ScanMatch[];
-  result: ScanResult | null;
-  errorMsg: string;
-  expanded: boolean;
-}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -389,19 +375,26 @@ type UIMode = 'idle' | 'error';
 export function CardScanner() {
   const uid = useId();
   const [mode, setMode]           = useState<UIMode>('idle');
-  const [jobs, setJobs]           = useState<ScanJob[]>([]);
+  const jobs = useScanStore(s => s.jobs);
+  const scanLang = useScanStore(s => s.scanLang);
+  const setScanLang = useScanStore(s => s.setScanLang);
+  const addJob = useScanStore(s => s.addJob);
+  const updateJob = useScanStore(s => s.updateJob);
+  const toggleJob = useScanStore(s => s.toggleJob);
+  const dismissJob = useScanStore(s => s.dismissJob);
+  const clearDone = useScanStore(s => s.clearDone);
+  const nextJobId = useScanStore(s => s.nextJobId);
+
   const [errorMsg]   = useState('');
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [cameraSupported, setCameraSupported] = useState<boolean | null>(null);
   const [shotFlash, setShotFlash] = useState(false);
   const [serverUrl, setServerUrl] = useState(() => getBackendUrl() ?? '');
   const [serverConnected, setServerConnected] = useState<boolean | null>(null);
-  const [scanLang, setScanLang]   = useState<ScanLanguage>('en');
 
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
   const inlineStreamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const jobSeqRef   = useRef(0);
 
   const [isMobile] = useState(() =>
     typeof window !== 'undefined' &&
@@ -466,26 +459,20 @@ export function CardScanner() {
 
 
   const queueScan = useCallback(async (blob: Blob, previewUrl: string) => {
-    const id = `${uid}-${++jobSeqRef.current}`;
-    setJobs(prev => [{
+    const id = nextJobId(uid);
+    addJob({
       id, previewUrl, status: 'scanning',
       matches: [], result: null, errorMsg: '', expanded: false,
-    }, ...prev]);
+    });
 
     try {
       const result = await cardScanService.scanCard(blob, 5, scanLang);
-      setJobs(prev => prev.map(j =>
-        j.id === id
-          ? { ...j, status: 'done', matches: result.matches, result, expanded: result.matches.length > 0 }
-          : j
-      ));
+      updateJob(id, { status: 'done', matches: result.matches, result, expanded: result.matches.length > 0 });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Scan failed. Is the backend running?';
-      setJobs(prev => prev.map(j =>
-        j.id === id ? { ...j, status: 'error', errorMsg: msg } : j
-      ));
+      updateJob(id, { status: 'error', errorMsg: msg });
     }
-  }, [uid, scanLang]);
+  }, [uid, scanLang, nextJobId, addJob, updateJob]);
 
   const captureInlineFrame = useCallback(() => {
     const video = inlineVideoRef.current;
@@ -535,28 +522,6 @@ export function CardScanner() {
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (files.length) loadFiles(files);
   };
-
-  const toggleJob  = (id: string) =>
-    setJobs(prev => prev.map(j => j.id === id ? { ...j, expanded: !j.expanded } : j));
-  const dismissJob = (id: string) =>
-    setJobs(prev => {
-      const job = prev.find(j => j.id === id);
-      if (job?.result?.cropNameUrl) URL.revokeObjectURL(job.result.cropNameUrl);
-      if (job?.result?.cropNumberUrl) URL.revokeObjectURL(job.result.cropNumberUrl);
-      if (job?.previewUrl) URL.revokeObjectURL(job.previewUrl);
-      return prev.filter(j => j.id !== id);
-    });
-  const clearDone  = () =>
-    setJobs(prev => {
-      for (const j of prev) {
-        if (j.status !== 'scanning') {
-          if (j.result?.cropNameUrl) URL.revokeObjectURL(j.result.cropNameUrl);
-          if (j.result?.cropNumberUrl) URL.revokeObjectURL(j.result.cropNumberUrl);
-          if (j.previewUrl) URL.revokeObjectURL(j.previewUrl);
-        }
-      }
-      return prev.filter(j => j.status === 'scanning');
-    });
 
   useEffect(() => () => {
     inlineStreamRef.current?.getTracks().forEach(t => t.stop());
