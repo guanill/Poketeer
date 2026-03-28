@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import type { ScanMatch, ScanResult, ScanLanguage } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
+import { preloadWorker } from '../services/supabaseScanService';
 import { catalogService } from '../services/catalogService';
 import { useCollectionStore } from '../store/collectionStore';
 import { isNativePlatform } from '../utils/platform';
@@ -407,6 +408,9 @@ export function CardScanner() {
     ('ontouchstart' in window || window.innerWidth < 640)
   );
 
+  // Preload Tesseract worker so first scan is fast
+  useEffect(() => { preloadWorker(scanLang); }, [scanLang]);
+
   useEffect(() => {
     cardScanService.checkHealth().then(setBackendOk);
     const supported =
@@ -535,9 +539,24 @@ export function CardScanner() {
   const toggleJob  = (id: string) =>
     setJobs(prev => prev.map(j => j.id === id ? { ...j, expanded: !j.expanded } : j));
   const dismissJob = (id: string) =>
-    setJobs(prev => prev.filter(j => j.id !== id));
+    setJobs(prev => {
+      const job = prev.find(j => j.id === id);
+      if (job?.result?.cropNameUrl) URL.revokeObjectURL(job.result.cropNameUrl);
+      if (job?.result?.cropNumberUrl) URL.revokeObjectURL(job.result.cropNumberUrl);
+      if (job?.previewUrl) URL.revokeObjectURL(job.previewUrl);
+      return prev.filter(j => j.id !== id);
+    });
   const clearDone  = () =>
-    setJobs(prev => prev.filter(j => j.status === 'scanning'));
+    setJobs(prev => {
+      for (const j of prev) {
+        if (j.status !== 'scanning') {
+          if (j.result?.cropNameUrl) URL.revokeObjectURL(j.result.cropNameUrl);
+          if (j.result?.cropNumberUrl) URL.revokeObjectURL(j.result.cropNumberUrl);
+          if (j.previewUrl) URL.revokeObjectURL(j.previewUrl);
+        }
+      }
+      return prev.filter(j => j.status === 'scanning');
+    });
 
   useEffect(() => () => {
     inlineStreamRef.current?.getTracks().forEach(t => t.stop());

@@ -59,12 +59,14 @@ const NAME_PROFILES = [
   { label: 'balanced',      filter: 'grayscale(1) contrast(1.8) brightness(1.1)' },
   { label: 'high-contrast', filter: 'grayscale(1) contrast(2.8) brightness(1.2)' },
   { label: 'low-contrast',  filter: 'grayscale(1) contrast(1.3) brightness(1.0)' },
+  { label: 'sharpen',       filter: 'grayscale(1) contrast(2.2) brightness(1.05) saturate(0)' },
 ];
 
 const NUMBER_PROFILES = [
   { label: 'balanced',      filter: 'grayscale(1) contrast(2.5) brightness(1.15)' },
   { label: 'high-contrast', filter: 'grayscale(1) contrast(3.5) brightness(1.3)' },
   { label: 'inverted',      filter: 'grayscale(1) contrast(2.0) brightness(1.4) invert(1)' },
+  { label: 'sharpen',       filter: 'grayscale(1) contrast(3.0) brightness(1.0) saturate(0)' },
 ];
 
 // ── Tesseract worker (reused across scans) ───────────────────────────────────
@@ -82,6 +84,11 @@ async function getWorker(lang: ScanLanguage): Promise<TessWorker> {
   }
   if (!_workerEn) _workerEn = await createWorker('eng');
   return _workerEn;
+}
+
+/** Preload the Tesseract worker for a given language so the first scan is fast. */
+export function preloadWorker(lang: ScanLanguage): void {
+  getWorker(lang).catch(() => {});
 }
 
 // ── Multi-pass OCR ───────────────────────────────────────────────────────────
@@ -160,6 +167,13 @@ function extractCardNumber(text: string): string | null {
   return null;
 }
 
+/** Extract a set code/abbreviation from OCR text (e.g. "SV6", "S12a", "MEW"). */
+function extractSetHint(text: string): string {
+  // Common patterns: "SV6", "S12a", "SM12", "MEW", "sv6pt5" etc.
+  const m = text.match(/\b([A-Za-z]{1,4}\d{1,3}[a-z]{0,3})\b/);
+  return m ? m[1] : '';
+}
+
 /** Extract the card name from OCR text, handling both EN and JA. */
 function extractNameQuery(text: string, lang: ScanLanguage): string {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -190,6 +204,7 @@ async function searchByNumber(
   nameHint: string,
   topK: number,
   lang: ScanLanguage,
+  setHint = '',
 ): Promise<ScanMatch[]> {
   // Try the number as-is + zero-padded to 3 digits (e.g. "5" → "005", "25" → "025")
   const variants = new Set<string>([cardNumber]);
@@ -249,6 +264,17 @@ async function searchByNumber(
     }
   }
 
+  // Use set hint from bottom OCR text to disambiguate same-numbered cards across sets
+  if (setHint && setHint.length >= 2) {
+    const hint = setHint.toLowerCase();
+    for (const r of results) {
+      const sname = r.set_name.toLowerCase();
+      if (sname.includes(hint) || hint.includes(sname)) {
+        r.confidence = Math.min(0.99, r.confidence + 0.04);
+      }
+    }
+  }
+
   results.sort((a, b) => b.confidence - a.confidence);
   return results.slice(0, topK);
 }
@@ -271,13 +297,21 @@ async function searchByName(
     return !row.set_id.endsWith('-ja') && !row.set_id.endsWith('-th');
   });
 
+  // Fetch set names for results
+  const setIds = [...new Set(filtered.map(r => r.set_id))];
+  const setNameMap = new Map<string, string>();
+  if (setIds.length > 0) {
+    const { data: sets } = await supabase.from('sets').select('id, name').in('id', setIds);
+    if (sets) sets.forEach(s => setNameMap.set(s.id, s.name));
+  }
+
   return filtered.slice(0, topK).map(row => ({
     id: row.id,
     name: row.name,
     name_en: row.name_en || undefined,
     number: row.number,
     set_id: row.set_id,
-    set_name: '',
+    set_name: setNameMap.get(row.set_id) ?? '',
     rarity: row.rarity,
     image_small: row.image_small,
     image_large: row.image_large,
@@ -409,12 +443,13 @@ export async function supabaseScan(
     || extractCardNumber(nameText)
     || extractCardNumber(nameText + ' ' + numberText);
   const nameQuery = extractNameQuery(nameText, lang);
+  const setHint = extractSetHint(numberText);
 
   // 3. Search by number first (most reliable), then by name
   let ocrMatches: ScanMatch[] = [];
 
   if (cardNumber) {
-    ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, lang);
+    ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, lang, setHint);
   }
 
   if (ocrMatches.length === 0 && nameQuery.length >= 1) {
