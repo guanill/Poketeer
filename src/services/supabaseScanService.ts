@@ -174,24 +174,27 @@ function extractSetHint(text: string): string {
   return m ? m[1] : '';
 }
 
+/** Lines that are card metadata, not the card name. */
+const JUNK_NAME_RE = /^(stage\s*[0-9]|basic|mega|break|v-?star|v-?max|v-?union|gx|ex|lv\.\s*x|restored|legend|item|trainer|supporter|stadium|energy|tool|\u305F\u306D|\u305F\u3093\u3044)/i;
+
 /** Extract the card name from OCR text, handling both EN and JA. */
 function extractNameQuery(text: string, lang: ScanLanguage): string {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   if (lines.length === 0) return '';
 
   if (lang === 'ja') {
-    for (const line of lines.slice(0, 4)) {
+    for (const line of lines.slice(0, 6)) {
       const clean = line
         .replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEFa-zA-Z\s'.\-]/g, '')
         .trim();
-      if (clean.length >= 1) return clean;
+      if (clean.length >= 1 && !JUNK_NAME_RE.test(clean)) return clean;
     }
     return lines[0];
   }
 
-  for (const line of lines.slice(0, 4)) {
+  for (const line of lines.slice(0, 6)) {
     const clean = line.replace(/[^a-zA-Z\u00C0-\u024F\s'.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (clean.length >= 2) return clean;
+    if (clean.length >= 2 && !JUNK_NAME_RE.test(clean)) return clean;
   }
   return lines[0];
 }
