@@ -71,8 +71,12 @@ def main():
             if not res.data:
                 break
             for r in res.data:
-                if r["number"] not in name_map and r.get("name_en"):
-                    name_map[r["number"]] = r["name_en"]
+                if r.get("name_en"):
+                    num = r["number"]
+                    name_map[num] = r["name_en"]
+                    # Also store stripped/padded variants for cross-matching
+                    name_map[num.lstrip("0") or "0"] = r["name_en"]
+                    name_map[num.zfill(3)] = r["name_en"]
             ref_page += 1
 
         matched = 0
