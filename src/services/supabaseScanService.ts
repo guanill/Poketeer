@@ -2,8 +2,8 @@
  * Supabase-backed card scanning.
  *
  * Pipeline:
- *   1. Crop top 25% of card image → multi-pass OCR the name (3 contrast profiles)
- *   2. Crop bottom 12% → multi-pass OCR the card number (2 profiles)
+ *   1. Send image to PaddleOCR HF Space → get card name, number, set code
+ *   2. Fallback: client-side Tesseract.js multi-pass OCR
  *   3. Search by number first (most accurate), then fuzzy name search
  *   4. Optional: if cloud embedding model is up, boost/merge with visual matches
  */
@@ -11,8 +11,40 @@
 import { supabase } from '../lib/supabase';
 import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
 
-// HF Space URL for optional visual embedding boost
+// HF Space URLs
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
+const HF_OCR_URL = 'https://agm3000-poketeer-card-ocr.hf.space';
+
+// ── PaddleOCR via HF Space ──────────────────────────────────────────────────
+
+interface PaddleOcrResult {
+  name: string;
+  number: string;
+  set_code: string;
+  all_text: Array<{ text: string; confidence: number; region: string; position: { y_center: number; x_center: number } }>;
+}
+
+async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage): Promise<PaddleOcrResult | null> {
+  try {
+    const formData = new FormData();
+    formData.append('file', imageFile);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+
+    const res = await fetch(`${HF_OCR_URL}/ocr?lang=${lang}`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 // ── Image cropping ───────────────────────────────────────────────────────────
 
@@ -417,9 +449,10 @@ function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK:
 
 /**
  * Scan a card image:
- *   1. Crop top 25% → multi-pass OCR name, crop bottom 12% → multi-pass OCR number
- *   2. Search by number (most accurate) or fuzzy name search
- *   3. Optionally boost with visual embedding if cloud model is available
+ *   1. Try PaddleOCR (HF Space) — best accuracy
+ *   2. Fallback: client-side Tesseract.js multi-pass OCR
+ *   3. Search by number (most accurate) or fuzzy name search
+ *   4. Optionally boost with visual embedding if cloud model is available
  */
 export async function supabaseScan(
   imageFile: File | Blob,
@@ -429,37 +462,61 @@ export async function supabaseScan(
   // 1. Start visual matching immediately (runs in parallel with OCR)
   const visualPromise = tryVisualMatch(imageFile, topK, lang).catch(() => [] as ScanMatch[]);
 
-  // 2. Multi-pass OCR on name and number regions in parallel
-  let nameResult: OcrResult = { text: '', confidence: 0 };
-  let numberResult: OcrResult = { text: '', confidence: 0 };
+  // 2. Try PaddleOCR first (cloud, high accuracy)
+  let cardNumber: string | null = null;
+  let nameQuery = '';
+  let setHint = '';
+  let ocrText = '';
+  let usedPaddle = false;
 
-  try {
-    // Name: crop 3%-18% from top (skips the very top edge, captures name line)
-    // Number: crop 88%-97% from top (bottom strip with card number)
-    // Scale 3x for both — Tesseract needs decent resolution
-    [nameResult, numberResult] = await Promise.all([
-      ocrMultiPass(imageFile, 0.03, 0.18, 3, NAME_PROFILES, lang),
-      ocrMultiPass(imageFile, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
-    ]);
-  } catch (err) {
-    console.warn('[supabaseScan] Crop/OCR failed:', err);
+  const paddleResult = await tryPaddleOcr(imageFile, lang);
+
+  if (paddleResult && (paddleResult.name || paddleResult.number)) {
+    usedPaddle = true;
+    cardNumber = paddleResult.number || null;
+    nameQuery = paddleResult.name;
+    setHint = paddleResult.set_code;
+    ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${paddleResult.number} | set: ${paddleResult.set_code}`;
+
+    console.log('[scan] PaddleOCR →', ocrText);
+    if (paddleResult.all_text) {
+      console.log('[scan] all text:', paddleResult.all_text.map(t => `${t.region}: "${t.text}" (${t.confidence})`).join(', '));
+    }
   }
 
-  const nameText = nameResult.text;
-  const numberText = numberResult.text;
-  const ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
+  // 3. Fallback: client-side Tesseract.js if PaddleOCR failed
+  if (!usedPaddle) {
+    console.log('[scan] PaddleOCR unavailable, falling back to Tesseract.js');
 
-  const cardNumber = extractCardNumber(numberText)
-    || extractCardNumber(nameText)
-    || extractCardNumber(nameText + ' ' + numberText);
-  const nameQuery = extractNameQuery(nameText, lang);
-  const setHint = extractSetHint(numberText);
+    let nameResult: OcrResult = { text: '', confidence: 0 };
+    let numberResult: OcrResult = { text: '', confidence: 0 };
 
-  console.log('[scan] name OCR:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
-  console.log('[scan] number OCR:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
+    try {
+      [nameResult, numberResult] = await Promise.all([
+        ocrMultiPass(imageFile, 0.03, 0.18, 3, NAME_PROFILES, lang),
+        ocrMultiPass(imageFile, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
+      ]);
+    } catch (err) {
+      console.warn('[supabaseScan] Crop/OCR failed:', err);
+    }
+
+    const nameText = nameResult.text;
+    const numberText = numberResult.text;
+    ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
+
+    cardNumber = extractCardNumber(numberText)
+      || extractCardNumber(nameText)
+      || extractCardNumber(nameText + ' ' + numberText);
+    nameQuery = extractNameQuery(nameText, lang);
+    setHint = extractSetHint(numberText);
+
+    console.log('[scan] Tesseract name:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
+    console.log('[scan] Tesseract number:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
+  }
+
   console.log('[scan] extracted → number:', cardNumber, '| name:', nameQuery, '| set:', setHint);
 
-  // 3. Search by number first (most reliable), then by name
+  // 4. Search by number first (most reliable), then by name
   let ocrMatches: ScanMatch[] = [];
 
   if (cardNumber) {
@@ -470,8 +527,8 @@ export async function supabaseScan(
     ocrMatches = await searchByName(nameQuery, topK, lang);
   }
 
-  // Retry with wider bottom crop (bottom 25%) if nothing found yet
-  if (ocrMatches.length === 0) {
+  // Retry with wider bottom crop (bottom 25%) if nothing found yet — Tesseract only
+  if (ocrMatches.length === 0 && !usedPaddle) {
     try {
       const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, lang);
       const wideNumber = extractCardNumber(wideBottom.text);
@@ -481,8 +538,8 @@ export async function supabaseScan(
     } catch { /* ignore */ }
   }
 
-  // Last resort: OCR the full image (handles desktop uploads without card guide crop)
-  if (ocrMatches.length === 0) {
+  // Last resort: full-image OCR — Tesseract only
+  if (ocrMatches.length === 0 && !usedPaddle) {
     try {
       const fullResult = await ocrMultiPass(imageFile, 0, 1, 1, NAME_PROFILES.slice(0, 1), lang);
       const fullNumber = extractCardNumber(fullResult.text);
@@ -526,16 +583,11 @@ export async function supabaseScan(
     ? 'combined'
     : visualMatches.length > 0 ? 'visual' : ocrMatches.length > 0 ? 'ocr' : 'none';
 
-  const cropNameUrl = nameResult.cropBlob ? URL.createObjectURL(nameResult.cropBlob) : undefined;
-  const cropNumberUrl = numberResult.cropBlob ? URL.createObjectURL(numberResult.cropBlob) : undefined;
-
   return {
     matches,
     ocr_text: ocrText,
     method_used: methodUsed as ScanResult['method_used'],
     visual_index_size: visualMatches.length,
     catalog_size: 0,
-    cropNameUrl,
-    cropNumberUrl,
   };
 }
