@@ -242,17 +242,38 @@ function JobCard({
             if (paddleMatch) {
               const [, ocrName, ocrNum, ocrSet, ocrLang] = paddleMatch;
               return (
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                  {ocrName && <span className="text-[10px] text-gray-500">Name: <span className="text-purple-400/80 font-medium">{ocrName}</span></span>}
-                  {ocrNum && <span className="text-[10px] text-gray-500">#{ocrNum}</span>}
-                  {ocrSet && <span className="text-[10px] text-gray-500">Set: <span className="text-blue-400/70">{ocrSet}</span></span>}
-                  <span className="text-[10px] text-gray-600 uppercase">{ocrLang}</span>
+                <div className="mt-1 p-2 rounded-lg bg-white/5 border border-white/8 space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Scan size={10} className="text-purple-400/60 shrink-0" />
+                    <span className="text-[10px] text-gray-500 font-semibold">OCR Result</span>
+                    <span className="text-[9px] text-gray-600 uppercase ml-auto">{ocrLang}</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {ocrName && (
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-[9px] text-gray-600 w-8 shrink-0">Name</span>
+                        <span className="text-[11px] text-purple-300 font-medium break-all">{ocrName}</span>
+                      </div>
+                    )}
+                    {ocrNum && (
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-[9px] text-gray-600 w-8 shrink-0">No.</span>
+                        <span className="text-[11px] text-amber-300 font-medium">{ocrNum}</span>
+                      </div>
+                    )}
+                    {ocrSet && (
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-[9px] text-gray-600 w-8 shrink-0">Set</span>
+                        <span className="text-[11px] text-blue-300 font-medium">{ocrSet}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             }
             // Fallback for Tesseract text
             return (
-              <p className="text-[10px] text-gray-600 mt-0.5 truncate" title={rawOcrText}>
+              <p className="text-[10px] text-gray-600 mt-0.5 break-all" title={rawOcrText}>
                 Read: <span className="text-gray-500">{ocrHint || rawOcrText.split('\n')[0]}</span>
               </p>
             );

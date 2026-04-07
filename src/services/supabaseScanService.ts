@@ -293,14 +293,24 @@ async function searchByNumber(
     method: 'ocr' as const,
   }));
 
-  // Use name hint to rank — if name matches, boost confidence significantly
+  // Use name hint to rank — name match is the strongest signal
   if (nameHint && nameHint.length >= 2) {
-    const hint = nameHint.toLowerCase();
+    const hint = nameHint.toLowerCase().trim();
     for (const r of results) {
       const name = r.name.toLowerCase();
       const nameEn = (r.name_en ?? '').toLowerCase();
-      if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
+
+      // Exact match
+      if (name === hint || nameEn === hint) {
+        r.confidence = 0.99;
+      }
+      // Substring match (OCR read "Ferroseed" and card name contains it or vice versa)
+      else if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
         r.confidence = 0.95;
+      }
+      // No name match at all — penalize heavily so matching names always win
+      else {
+        r.confidence = 0.30;
       }
     }
   }
@@ -309,12 +319,10 @@ async function searchByNumber(
   if (setHint && setHint.length >= 2) {
     const hint = setHint.toLowerCase();
     for (const r of results) {
-      // Extract the code part from set_id (e.g. "SV6-en" → "sv6")
       const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
       if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
         r.confidence = Math.min(0.99, r.confidence + 0.10);
       } else {
-        // Also try matching against set name
         const sname = r.set_name.toLowerCase();
         if (sname.includes(hint) || hint.includes(sname)) {
           r.confidence = Math.min(0.99, r.confidence + 0.04);
