@@ -241,6 +241,8 @@ function JobCard({
             const paddleMatch = rawOcrText.match(/\[PaddleOCR\] name: (.*?) \| number: (.*?) \| set: (.*?) \| lang: (.*)/);
             if (paddleMatch) {
               const [, ocrName, ocrNum, ocrSet, ocrLang] = paddleMatch;
+              // Get the matched set name from the top result
+              const matchedSetName = topMatch?.set_name ?? '';
               return (
                 <div className="mt-1 p-2 rounded-lg bg-white/5 border border-white/8 space-y-1">
                   <div className="flex items-center gap-1.5">
@@ -261,12 +263,15 @@ function JobCard({
                         <span className="text-[11px] text-amber-300 font-medium">{ocrNum}</span>
                       </div>
                     )}
-                    {ocrSet && (
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-[9px] text-gray-600 w-8 shrink-0">Set</span>
-                        <span className="text-[11px] text-blue-300 font-medium">{ocrSet}</span>
-                      </div>
-                    )}
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-[9px] text-gray-600 w-8 shrink-0">Set</span>
+                      <span className="text-[11px] text-blue-300 font-medium break-all">
+                        {matchedSetName || ocrSet || '—'}
+                        {ocrSet && matchedSetName && (
+                          <span className="text-[9px] text-gray-600 ml-1">({ocrSet})</span>
+                        )}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
