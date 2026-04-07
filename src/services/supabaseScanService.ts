@@ -19,10 +19,22 @@ const HF_OCR_URL = 'https://agm3000-poketeer-card-ocr.hf.space';
 
 interface PaddleOcrResult {
   name: string;
+  name_en?: string;
   number: string;
   set_code: string;
   detected_lang?: 'en' | 'ja' | 'th';
   all_text: Array<{ text: string; confidence: number; region: string; position: { y_center: number; x_center: number } }>;
+}
+
+// ── HF Space warm-up ────────────────────────────────────────────────────────
+
+let _hfWarmupDone = false;
+
+/** Ping the HF OCR Space so it wakes from sleep before the user scans. */
+export function warmupHfSpace(): void {
+  if (_hfWarmupDone) return;
+  _hfWarmupDone = true;
+  fetch(`${HF_OCR_URL}/health`, { method: 'GET' }).catch(() => {});
 }
 
 async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage | 'auto' = 'auto'): Promise<PaddleOcrResult | null> {
@@ -236,6 +248,78 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
   return lines[0];
 }
 
+// ── OCR name cleaning ───────────────────────────────────────────────────────
+
+/** Pokemon suffix patterns to strip for base-name fallback. */
+const POKEMON_SUFFIXES_RE = /\s*[-\s]?\b(ex|EX|gx|GX|v|V|vstar|VSTAR|vmax|VMAX|v-?union|V-?UNION|break|BREAK|lv\.\s*x|LV\.\s*X|mega|MEGA|δ)\s*$/i;
+
+/** Junk that OCR may include in the name text. */
+const JUNK_IN_NAME_RE = /\b(HP\s*\d+|\d+\s*HP|Basic|Stage\s*\d|たね|1進化|2進化|item|trainer|supporter|energy)\b/gi;
+
+/** Clean an OCR name: strip suffixes, junk, extra whitespace, stray punctuation. */
+function cleanOcrName(raw: string): { cleaned: string; baseName: string } {
+  // Strip stray OCR punctuation (quotes, brackets, pipes)
+  let cleaned = raw.replace(/[""''「」【】\[\](){}|~`]/g, '').trim();
+  // Strip obvious junk
+  cleaned = cleaned.replace(JUNK_IN_NAME_RE, '').replace(/\s{2,}/g, ' ').trim();
+  // Strip trailing numbers (OCR sometimes merges HP/number into name)
+  cleaned = cleaned.replace(/\s+\d{2,}$/, '').trim();
+  // Strip leading/trailing punctuation remnants
+  cleaned = cleaned.replace(/^[.,;:!?\-–—]+|[.,;:!?\-–—]+$/g, '').trim();
+
+  // Base name = without Pokemon suffix (e.g. "Charizard" from "Charizard ex")
+  const baseName = cleaned.replace(POKEMON_SUFFIXES_RE, '').trim();
+
+  return { cleaned, baseName: baseName !== cleaned ? baseName : '' };
+}
+
+// ── OCR metadata extraction ─────────────────────────────────────────────────
+
+/** Extract HP value from PaddleOCR all_text (e.g. "HP 120" → "120"). */
+function extractHpHint(allText: PaddleOcrResult['all_text']): string {
+  for (const t of allText) {
+    const m = t.text.match(/\b(?:HP|hp)\s*(\d{2,3})\b/) || t.text.match(/\b(\d{2,3})\s*(?:HP|hp)\b/);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+/** Detect supertype from OCR text: "Pokémon", "Trainer", or "Energy". */
+function detectSupertype(allText: PaddleOcrResult['all_text']): string {
+  const combined = allText.map(t => t.text).join(' ');
+  // Trainer keywords (EN/JA/TH)
+  if (/\b(Trainer|Supporter|Item|Stadium|Tool|トレーナーズ|サポート|グッズ|スタジアム|ผู้ฝึก|ไอเทม)\b/i.test(combined)) {
+    return 'Trainer';
+  }
+  // Energy keywords
+  if (/\b(Energy|エネルギー|พลังงาน)\b/i.test(combined)) {
+    return 'Energy';
+  }
+  return ''; // Default: Pokémon (most common, don't filter)
+}
+
+/**
+ * Generate OCR char-correction variants of a name for ilike queries.
+ * E.g. "Charizand" → ["Charizand", "Charizard"] (d↔rd isn't a char swap,
+ * but "0"↔"O", "1"↔"l"/"I", "5"↔"S" are common OCR confusions).
+ */
+function nameSearchVariants(name: string): string[] {
+  const variants = new Set<string>([name]);
+  // Common OCR char swaps (reverse of number corrections)
+  const swaps: [RegExp, string][] = [
+    [/0/g, 'O'], [/O/g, '0'],
+    [/1/g, 'l'], [/l/g, '1'],
+    [/5/g, 'S'], [/S/g, '5'],
+    [/8/g, 'B'], [/B/g, '8'],
+    [/rn/g, 'm'], [/m/g, 'rn'], // OCR often reads "m" as "rn"
+  ];
+  for (const [pattern, replacement] of swaps) {
+    const variant = name.replace(pattern, replacement);
+    if (variant !== name && variant.length >= 2) variants.add(variant);
+  }
+  return [...variants];
+}
+
 // ── Fuzzy string matching ────────────────────────────────────────────────────
 
 /** Levenshtein edit distance between two strings. */
@@ -256,8 +340,7 @@ function editDistance(a: string, b: string): number {
 
 /**
  * Fuzzy similarity between two strings (0–1, higher = more similar).
- * Combines normalized edit distance with a "characters in common" check
- * so that "frrseed" vs "Ferroseed" scores high.
+ * Combines edit distance, substring matching, and prefix matching.
  */
 function fuzzySimilarity(a: string, b: string): number {
   const la = a.toLowerCase();
@@ -274,17 +357,40 @@ function fuzzySimilarity(a: string, b: string): number {
   // Substring bonus: if one contains the other
   if (la.includes(lb) || lb.includes(la)) return Math.max(editScore, 0.9);
 
+  // Prefix bonus: first N chars match (common with OCR cutting off end of name)
+  const prefixLen = Math.min(la.length, lb.length, 5);
+  if (prefixLen >= 3 && la.slice(0, prefixLen) === lb.slice(0, prefixLen)) {
+    return Math.max(editScore, 0.75);
+  }
+
+  // Token overlap bonus: "Iron Valiant" vs "Ironvaliant" or word reordering
+  const tokensA = new Set(la.split(/[\s\-]+/).filter(t => t.length > 1));
+  const tokensB = new Set(lb.split(/[\s\-]+/).filter(t => t.length > 1));
+  if (tokensA.size > 0 && tokensB.size > 0) {
+    let overlap = 0;
+    for (const t of tokensA) if (tokensB.has(t)) overlap++;
+    const tokenScore = overlap / Math.max(tokensA.size, tokensB.size);
+    if (tokenScore >= 0.5) return Math.max(editScore, 0.65 + tokenScore * 0.3);
+  }
+
   return editScore;
 }
 
 /** Score how well an OCR name hint matches a card name. Returns 0–0.99. */
 function nameMatchScore(hint: string, cardName: string, cardNameEn: string): number {
-  const bestSim = Math.max(
-    fuzzySimilarity(hint, cardName),
-    cardNameEn ? fuzzySimilarity(hint, cardNameEn) : 0,
-  );
+  // Try both the raw hint and its base name (without suffix)
+  const { cleaned, baseName } = cleanOcrName(hint);
+  const candidates = baseName ? [cleaned, baseName] : [cleaned];
 
-  // >= 0.85 similarity: very likely the same name (e.g. "frrseed" vs "Ferroseed" = ~0.78 edit, but with substring logic higher)
+  let bestSim = 0;
+  for (const candidate of candidates) {
+    bestSim = Math.max(
+      bestSim,
+      fuzzySimilarity(candidate, cardName),
+      cardNameEn ? fuzzySimilarity(candidate, cardNameEn) : 0,
+    );
+  }
+
   if (bestSim >= 0.90) return 0.99;
   if (bestSim >= 0.75) return 0.90;
   if (bestSim >= 0.60) return 0.70;
@@ -343,6 +449,15 @@ function buildNumberVariants(cardNumber: string): { exact: string[]; nearby: str
   return { exact: [...exact], nearby: [...nearby] };
 }
 
+/** Try to resolve set hint to actual set_id suffixes for precise filtering. */
+function resolveSetIds(setHint: string, lang: ScanLanguage): string[] {
+  if (!setHint || setHint.length < 2) return [];
+  const hint = setHint.toLowerCase();
+  const langSuffix = `-${lang}`;
+  // Common patterns: "sv6" → "sv6-en", "s12a" → "s12a-ja"
+  return [`${hint}${langSuffix}`];
+}
+
 /** Search cards by number + optional name hint. Tries multiple number formats. */
 async function searchByNumber(
   cardNumber: string,
@@ -350,83 +465,124 @@ async function searchByNumber(
   topK: number,
   lang: ScanLanguage,
   setHint = '',
+  hpHint = '',
+  supertypeHint = '',
 ): Promise<ScanMatch[]> {
   const { exact, nearby } = buildNumberVariants(cardNumber);
   const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
+  const { cleaned: cleanedName, baseName } = cleanOcrName(nameHint);
+  const nameVariants = [cleanedName, ...(baseName ? [baseName] : [])].filter(n => n.length >= 2);
 
-  // Strategy 1: If we have a name, search by BOTH name and number first.
-  if (nameHint && nameHint.length >= 2) {
-    // Try exact number + name
-    for (const num of exact) {
-      const { data, error } = await supabase
-        .from('cards')
-        .select('*, sets!inner(id, name, series, language)')
-        .eq('number', num)
-        .ilike('name', `%${nameHint}%`)
-        .eq('sets.language', langFilter)
-        .limit(topK);
-
-      if (!error && data && data.length > 0) {
-        const results = rowsToMatches(data);
-        for (const r of results) r.confidence = 0.97;
-        applySetHint(results, setHint);
-        results.sort((a, b) => b.confidence - a.confidence);
-        return results.slice(0, topK);
-      }
-    }
-
-    // Try nearby numbers + name (OCR misread 68 as 69 but name is correct)
-    for (const num of nearby) {
-      const { data, error } = await supabase
-        .from('cards')
-        .select('*, sets!inner(id, name, series, language)')
-        .eq('number', num)
-        .ilike('name', `%${nameHint}%`)
-        .eq('sets.language', langFilter)
-        .limit(topK);
-
-      if (!error && data && data.length > 0) {
-        const results = rowsToMatches(data);
-        // Slightly lower confidence — number was off but name matched
-        for (const r of results) r.confidence = 0.92;
-        applySetHint(results, setHint);
-        results.sort((a, b) => b.confidence - a.confidence);
-        return results.slice(0, topK);
-      }
-    }
-  }
-
-  // Strategy 2: Search by exact number only, rank by name.
-  let allRows: Array<Record<string, unknown>> = [];
-
-  for (const num of exact) {
+  // Strategy 0: Direct set_id + number lookup (batch with .in())
+  const setIds = resolveSetIds(setHint, lang);
+  if (setIds.length > 0 && exact.length > 0) {
     const { data, error } = await supabase
       .from('cards')
       .select('*, sets!inner(id, name, series, language)')
-      .eq('number', num)
-      .eq('sets.language', langFilter)
-      .limit(100);
+      .in('set_id', setIds)
+      .in('number', exact)
+      .limit(10);
 
     if (!error && data && data.length > 0) {
-      allRows = data;
-      break;
+      const results = rowsToMatches(data);
+      for (const r of results) r.confidence = 0.99;
+      if (nameVariants.length > 0) {
+        for (const r of results) {
+          const score = nameMatchScore(nameVariants[0], r.name, r.name_en ?? '');
+          r.confidence = Math.max(0.90, score);
+        }
+      }
+      results.sort((a, b) => b.confidence - a.confidence);
+      return results.slice(0, topK);
     }
   }
 
-  // Strategy 3: Also fetch nearby numbers so we can rank across all of them.
-  const nearbyRows: Array<Record<string, unknown>> = [];
-  if (nameHint && nameHint.length >= 2) {
-    for (const num of nearby) {
-      const { data, error } = await supabase
-        .from('cards')
-        .select('*, sets!inner(id, name, series, language)')
-        .eq('number', num)
-        .eq('sets.language', langFilter)
-        .limit(50);
+  // Strategy 1: name + number together (single query with .or() for name/name_en)
+  if (nameVariants.length > 0) {
+    // Generate OCR char-correction variants for broader matching
+    const allNameSearchTerms = new Set<string>();
+    for (const nv of nameVariants) {
+      for (const v of nameSearchVariants(nv)) allNameSearchTerms.add(v);
+    }
 
-      if (!error && data) nearbyRows.push(...data);
+    // Build or-filter: match name OR name_en for each variant
+    for (const nameVar of allNameSearchTerms) {
+      const orFilter = lang !== 'en'
+        ? `name.ilike.%${nameVar}%,name_en.ilike.%${nameVar}%`
+        : `name.ilike.%${nameVar}%`;
+
+      // Try exact numbers (batch with .in())
+      {
+        const { data, error } = await supabase
+          .from('cards')
+          .select('*, sets!inner(id, name, series, language)')
+          .in('number', exact)
+          .or(orFilter)
+          .eq('sets.language', langFilter)
+          .limit(topK);
+
+        if (!error && data && data.length > 0) {
+          const results = rowsToMatches(data);
+          for (const r of results) r.confidence = 0.97;
+          applySetHint(results, setHint);
+          results.sort((a, b) => b.confidence - a.confidence);
+          return results.slice(0, topK);
+        }
+      }
+
+      // Try nearby numbers (batch with .in())
+      if (nearby.length > 0) {
+        const { data, error } = await supabase
+          .from('cards')
+          .select('*, sets!inner(id, name, series, language)')
+          .in('number', nearby)
+          .or(orFilter)
+          .eq('sets.language', langFilter)
+          .limit(topK);
+
+        if (!error && data && data.length > 0) {
+          const results = rowsToMatches(data);
+          for (const r of results) r.confidence = 0.92;
+          applySetHint(results, setHint);
+          results.sort((a, b) => b.confidence - a.confidence);
+          return results.slice(0, topK);
+        }
+      }
     }
   }
+
+  // Strategy 2 + 3: Fetch exact and nearby numbers in PARALLEL, rank by name.
+  const exactPromise = (async () => {
+    const { data, error } = await supabase
+      .from('cards')
+      .select('*, sets!inner(id, name, series, language)')
+      .in('number', exact)
+      .eq('sets.language', langFilter)
+      .limit(100);
+    return (!error && data) ? data : [] as Array<Record<string, unknown>>;
+  })();
+
+  const nearbyPromise = (async () => {
+    if (nameVariants.length === 0) return [] as Array<Record<string, unknown>>;
+    const rows: Array<Record<string, unknown>> = [];
+    // Fetch all nearby numbers in parallel
+    const nearbyResults = await Promise.all(
+      nearby.map(num =>
+        supabase
+          .from('cards')
+          .select('*, sets!inner(id, name, series, language)')
+          .eq('number', num)
+          .eq('sets.language', langFilter)
+          .limit(50)
+      )
+    );
+    for (const { data, error } of nearbyResults) {
+      if (!error && data) rows.push(...data);
+    }
+    return rows;
+  })();
+
+  const [allRows, nearbyRows] = await Promise.all([exactPromise, nearbyPromise]);
 
   if (allRows.length === 0 && nearbyRows.length === 0) return [];
 
@@ -434,13 +590,12 @@ async function searchByNumber(
   const nearbyResults = rowsToMatches(nearbyRows);
 
   // Rank by fuzzy name match
-  if (nameHint && nameHint.length >= 2) {
-    const hint = nameHint.trim();
+  if (nameVariants.length > 0) {
+    const hint = nameVariants[0];
     for (const r of exactResults) {
       r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '');
     }
     for (const r of nearbyResults) {
-      // Nearby numbers get a slight penalty vs exact number matches
       r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '') * 0.95;
     }
   }
@@ -454,23 +609,66 @@ async function searchByNumber(
 
   const results = [...merged.values()];
   applySetHint(results, setHint);
+  applyHpHint(results, hpHint);
+  applySupertypeHint(results, supertypeHint);
   results.sort((a, b) => b.confidence - a.confidence);
   return results.slice(0, topK);
 }
 
-/** Boost confidence for cards matching the OCR set code. */
+/** Boost confidence for cards matching the OCR set code; penalize non-matches. */
 function applySetHint(results: ScanMatch[], setHint: string): void {
   if (!setHint || setHint.length < 2) return;
   const hint = setHint.toLowerCase();
+
+  // Count how many results match the set hint — if many match, the hint is strong
+  let matchCount = 0;
+  for (const r of results) {
+    const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
+    if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) matchCount++;
+  }
+  const hasStrongHint = matchCount > 0;
+
   for (const r of results) {
     const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
     if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
+      // Exact set match — strong boost
       r.confidence = Math.min(0.99, r.confidence + 0.10);
     } else {
       const sname = r.set_name.toLowerCase();
       if (sname.includes(hint) || hint.includes(sname)) {
+        // Set name partial match — small boost
         r.confidence = Math.min(0.99, r.confidence + 0.04);
+      } else if (hasStrongHint) {
+        // Wrong set when we have a confident match — penalize
+        r.confidence = Math.max(0.10, r.confidence * 0.80);
       }
+    }
+  }
+}
+
+/** Boost/penalize results based on HP match. */
+function applyHpHint(results: ScanMatch[], hpHint: string): void {
+  if (!hpHint) return;
+  for (const r of results) {
+    if (r.hp === hpHint) {
+      r.confidence = Math.min(0.99, r.confidence + 0.05);
+    } else if (r.hp && r.hp !== hpHint) {
+      // Different HP — small penalty (HP might be misread by OCR)
+      r.confidence = Math.max(0.10, r.confidence * 0.92);
+    }
+    // No HP on card (Trainer/Energy) — no change
+  }
+}
+
+/** Filter/penalize results that don't match detected supertype. */
+function applySupertypeHint(results: ScanMatch[], supertypeHint: string): void {
+  if (!supertypeHint) return;
+  for (const r of results) {
+    if (r.supertype === supertypeHint) {
+      r.confidence = Math.min(0.99, r.confidence + 0.03);
+    } else {
+      // Wrong supertype — strong penalty (Trainer vs Pokémon is a clear signal)
+      r.confidence = Math.max(0.10, r.confidence * 0.60);
     }
   }
 }
@@ -621,6 +819,8 @@ export async function supabaseScan(
   let cardNumber: string | null = null;
   let nameQuery = '';
   let setHint = '';
+  let hpHint = '';
+  let supertypeHint = '';
   let ocrText = '';
   let usedPaddle = false;
   let effectiveLang = lang;  // May be overridden by auto-detection
@@ -633,12 +833,33 @@ export async function supabaseScan(
     nameQuery = paddleResult.name;
     setHint = paddleResult.set_code;
 
+    // Extract extra signals from all_text
+    if (paddleResult.all_text) {
+      hpHint = extractHpHint(paddleResult.all_text);
+      supertypeHint = detectSupertype(paddleResult.all_text);
+    }
+
     // Use auto-detected language for DB search
     if (paddleResult.detected_lang) {
       effectiveLang = paddleResult.detected_lang;
     }
 
+    // For non-EN cards: if OCR found an English name (small text on card),
+    // use it as the search name — it matches the `name_en` DB field and is
+    // more reliable than the garbled native-script name from the EN engine.
+    if (effectiveLang !== 'en' && paddleResult.name_en && paddleResult.name_en.length >= 2) {
+      // If the main name is non-Latin (Thai/Japanese), prefer the English name for search
+      const hasNonLatin = /[^\x00-\x7F]/.test(nameQuery);
+      if (hasNonLatin || nameQuery.length < 2) {
+        console.log('[scan] Using name_en for search:', paddleResult.name_en, '(original:', nameQuery, ')');
+        nameQuery = paddleResult.name_en;
+      }
+    }
+
     ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${paddleResult.number} | set: ${paddleResult.set_code} | lang: ${effectiveLang}`;
+    if (paddleResult.name_en) ocrText += ` | name_en: ${paddleResult.name_en}`;
+    if (hpHint) ocrText += ` | hp: ${hpHint}`;
+    if (supertypeHint) ocrText += ` | type: ${supertypeHint}`;
 
     console.log('[scan] PaddleOCR →', ocrText);
     if (paddleResult.all_text) {
@@ -681,22 +902,34 @@ export async function supabaseScan(
 
   console.log('[scan] extracted → number:', cardNumber, '| name:', nameQuery, '| set:', setHint);
 
+  // Clean OCR name before searching
+  const { cleaned: cleanedNameQuery, baseName: baseNameQuery } = cleanOcrName(nameQuery);
+
   // 4. Search by number first (most reliable), then by name
   let ocrMatches: ScanMatch[] = [];
 
   if (cardNumber) {
-    ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, effectiveLang, setHint);
+    ocrMatches = await searchByNumber(cardNumber, cleanedNameQuery, topK, effectiveLang, setHint, hpHint, supertypeHint);
   }
 
-  if (ocrMatches.length === 0 && nameQuery.length >= 1) {
-    ocrMatches = await searchByName(nameQuery, topK, effectiveLang);
+  // Fallback: try base name without suffix (e.g. "Charizard" from "Charizard ex")
+  if (ocrMatches.length === 0 && baseNameQuery && cardNumber) {
+    ocrMatches = await searchByNumber(cardNumber, baseNameQuery, topK, effectiveLang, setHint, hpHint, supertypeHint);
+  }
+
+  if (ocrMatches.length === 0 && cleanedNameQuery.length >= 1) {
+    ocrMatches = await searchByName(cleanedNameQuery, topK, effectiveLang);
+    // If that fails, try base name
+    if (ocrMatches.length === 0 && baseNameQuery) {
+      ocrMatches = await searchByName(baseNameQuery, topK, effectiveLang);
+    }
   }
 
   // If auto-detected language found nothing, retry with other languages
   if (ocrMatches.length === 0 && usedPaddle && cardNumber) {
     const otherLangs: ScanLanguage[] = (['en', 'ja', 'th'] as const).filter(l => l !== effectiveLang);
     for (const tryLang of otherLangs) {
-      ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, tryLang, setHint);
+      ocrMatches = await searchByNumber(cardNumber, cleanedNameQuery, topK, tryLang, setHint, hpHint, supertypeHint);
       if (ocrMatches.length > 0) {
         effectiveLang = tryLang;
         console.log('[scan] Retried with lang:', tryLang, '→ found', ocrMatches.length, 'matches');

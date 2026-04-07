@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import type { ScanMatch } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
-import { preloadWorker } from '../services/supabaseScanService';
+import { preloadWorker, warmupHfSpace } from '../services/supabaseScanService';
 import { catalogService } from '../services/catalogService';
 import { useCollectionStore } from '../store/collectionStore';
 import { useScanStore } from '../store/scanStore';
@@ -386,8 +386,8 @@ export function CardScanner() {
   const uid = useId();
   const [mode, setMode]           = useState<UIMode>('idle');
   const jobs = useScanStore(s => s.jobs);
-  const scanLang = useScanStore(s => s.scanLang);
-  const setScanLang = useScanStore(s => s.setScanLang);
+  // Language is auto-detected — always pass 'en' as default (overridden by PaddleOCR)
+  const scanLang = 'en' as const;
   const addJob = useScanStore(s => s.addJob);
   const updateJob = useScanStore(s => s.updateJob);
   const toggleJob = useScanStore(s => s.toggleJob);
@@ -411,8 +411,8 @@ export function CardScanner() {
     ('ontouchstart' in window || window.innerWidth < 640)
   );
 
-  // Preload Tesseract worker so first scan is fast
-  useEffect(() => { preloadWorker(scanLang); }, [scanLang]);
+  // Preload Tesseract worker and wake HF Space so first scan is fast
+  useEffect(() => { preloadWorker('en'); warmupHfSpace(); }, []);
 
   useEffect(() => {
     cardScanService.checkHealth().then(setBackendOk);
@@ -482,7 +482,7 @@ export function CardScanner() {
       const msg = err instanceof Error ? err.message : 'Scan failed. Is the backend running?';
       updateJob(id, { status: 'error', errorMsg: msg });
     }
-  }, [uid, scanLang, nextJobId, addJob, updateJob]);
+  }, [uid, nextJobId, addJob, updateJob]);
 
   const captureInlineFrame = useCallback(() => {
     const video = inlineVideoRef.current;
@@ -623,32 +623,7 @@ export function CardScanner() {
           </div>
         )}
 
-        {/* Language selector */}
-        <div className="flex items-center gap-2 p-2 rounded-xl bg-white/3 border border-white/8">
-          <span className="text-xs font-semibold text-gray-400 ml-1">Scan language:</span>
-          <div className="flex gap-1 flex-1">
-            <button
-              onClick={() => setScanLang('en')}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                scanLang === 'en'
-                  ? 'bg-amber-400/15 text-amber-400 border border-amber-400/30'
-                  : 'bg-white/5 text-gray-500 border border-white/8 hover:text-gray-300'
-              }`}
-            >
-              <span className="text-sm">🇬🇧</span> English
-            </button>
-            <button
-              onClick={() => setScanLang('ja')}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                scanLang === 'ja'
-                  ? 'bg-red-400/15 text-red-400 border border-red-400/30'
-                  : 'bg-white/5 text-gray-500 border border-white/8 hover:text-gray-300'
-              }`}
-            >
-              <span className="text-sm">🇯🇵</span> Japanese
-            </button>
-          </div>
-        </div>
+        {/* Language is auto-detected by PaddleOCR — no manual selector needed */}
 
         {/* ---- MOBILE: inline camera feed + upload, fits viewport ---- */}
         {isMobile && mode !== 'error' && (
