@@ -75,6 +75,12 @@ export function SetDetail() {
 
   const ownedInSet = useMemo(() => {
     if (!set) return 0;
+    const langSuffix = set.id.endsWith('-ja') ? '-ja' : set.id.endsWith('-th') ? '-th' : '';
+    if (langSuffix) {
+      // Intl card IDs: "SV8a-181-th", set ID: "SV8a-th" → match "SV8a-" prefix + "-th" suffix
+      const prefix = set.id.slice(0, -langSuffix.length) + '-';
+      return Object.keys(owned).filter(id => id.startsWith(prefix) && id.endsWith(langSuffix)).length;
+    }
     return Object.keys(owned).filter(id => id.startsWith(set.id + '-')).length;
   }, [owned, set]);
 

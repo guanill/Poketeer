@@ -1,6 +1,7 @@
 import { useState, useMemo, useDeferredValue, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { Search, SlidersHorizontal, Layers, Globe } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import type { PokemonSet } from '../types';
@@ -19,8 +20,12 @@ const LANG_LABELS: Record<Lang, { flag: string; label: string }> = {
   th: { flag: '🇹🇭', label: 'Thai' },
 };
 
+const VALID_LANGS = new Set<Lang>(['en', 'ja', 'th']);
+
 export function Sets() {
-  const [lang, setLang] = useState<Lang>('en');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialLang = (searchParams.get('lang') as Lang) ?? 'en';
+  const [lang, setLang] = useState<Lang>(VALID_LANGS.has(initialLang) ? initialLang : 'en');
   const [search, setSearch] = useState('');
   const [seriesFilter, setSeriesFilter] = useState('All');
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'progress'>('date');
@@ -67,6 +72,7 @@ export function Sets() {
 
   const handleLangChange = (l: Lang) => {
     setLang(l);
+    setSearchParams(l === 'en' ? {} : { lang: l }, { replace: true });
     setSearch('');
     setSeriesFilter('All');
     // Fire-and-forget: warm the card cache for the first visible sets
@@ -91,11 +97,21 @@ export function Sets() {
   }, [sets]);
 
   // Owned card IDs grouped by set
+  // Card IDs: EN "sv06-001", intl "SV8a-181-th" — set IDs: "sv06", "SV8a-th"
   const ownedBySet = useMemo(() => {
     const map: Record<string, string[]> = {};
     Object.keys(owned).forEach(cardId => {
-      const parts = cardId.split('-');
-      const setId = parts.length >= 2 ? parts.slice(0, parts.length - 1).join('-') : parts[0];
+      const langSuffix = cardId.endsWith('-ja') ? '-ja' : cardId.endsWith('-th') ? '-th' : '';
+      let setId: string;
+      if (langSuffix) {
+        // Strip language suffix, then strip card number, then re-add suffix
+        const withoutLang = cardId.slice(0, -langSuffix.length);
+        const parts = withoutLang.split('-');
+        setId = parts.slice(0, parts.length - 1).join('-') + langSuffix;
+      } else {
+        const parts = cardId.split('-');
+        setId = parts.length >= 2 ? parts.slice(0, parts.length - 1).join('-') : parts[0];
+      }
       if (!map[setId]) map[setId] = [];
       map[setId].push(cardId);
     });
