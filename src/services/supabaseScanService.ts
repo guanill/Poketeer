@@ -238,44 +238,9 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
 
 // ── Supabase search helpers ──────────────────────────────────────────────────
 
-/** Search cards by number + optional name hint. Tries multiple number formats. */
-async function searchByNumber(
-  cardNumber: string,
-  nameHint: string,
-  topK: number,
-  lang: ScanLanguage,
-  setHint = '',
-): Promise<ScanMatch[]> {
-  // Try the number as-is + zero-padded to 3 digits (e.g. "5" → "005", "25" → "025")
-  const variants = new Set<string>([cardNumber]);
-  const numOnly = cardNumber.replace(/\D/g, '');
-  if (numOnly.length > 0) {
-    variants.add(numOnly);
-    variants.add(numOnly.padStart(3, '0'));
-    variants.add(numOnly.padStart(2, '0'));
-  }
-
-  // Map language to DB filter — TH cards are stored with language 'th'
-  const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
-  let allRows: Array<Record<string, unknown>> = [];
-
-  for (const num of variants) {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*, sets!inner(id, name, series, language)')
-      .eq('number', num)
-      .eq('sets.language', langFilter)
-      .limit(topK * 3);
-
-    if (!error && data && data.length > 0) {
-      allRows = data;
-      break;
-    }
-  }
-
-  if (allRows.length === 0) return [];
-
-  const results = allRows.map(row => ({
+/** Convert DB rows to ScanMatch objects. */
+function rowsToMatches(rows: Array<Record<string, unknown>>): ScanMatch[] {
+  return rows.map(row => ({
     id: row.id as string,
     name: row.name as string,
     name_en: (row.name_en as string) || undefined,
@@ -292,47 +257,106 @@ async function searchByNumber(
     confidence: 0.85,
     method: 'ocr' as const,
   }));
+}
 
-  // Use name hint to rank — name match is the strongest signal
+/** Search cards by number + optional name hint. Tries multiple number formats. */
+async function searchByNumber(
+  cardNumber: string,
+  nameHint: string,
+  topK: number,
+  lang: ScanLanguage,
+  setHint = '',
+): Promise<ScanMatch[]> {
+  const variants = new Set<string>([cardNumber]);
+  const numOnly = cardNumber.replace(/\D/g, '');
+  if (numOnly.length > 0) {
+    variants.add(numOnly);
+    variants.add(numOnly.padStart(3, '0'));
+    variants.add(numOnly.padStart(2, '0'));
+  }
+
+  const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
+
+  // Strategy 1: If we have a name, search by BOTH name and number first.
+  // This is the most precise query — returns only cards matching both.
+  if (nameHint && nameHint.length >= 2) {
+    for (const num of variants) {
+      const { data, error } = await supabase
+        .from('cards')
+        .select('*, sets!inner(id, name, series, language)')
+        .eq('number', num)
+        .ilike('name', `%${nameHint}%`)
+        .eq('sets.language', langFilter)
+        .limit(topK);
+
+      if (!error && data && data.length > 0) {
+        const results = rowsToMatches(data);
+        for (const r of results) r.confidence = 0.97;
+        applySetHint(results, setHint);
+        results.sort((a, b) => b.confidence - a.confidence);
+        return results.slice(0, topK);
+      }
+    }
+  }
+
+  // Strategy 2: Search by number only, fetch more results so we can rank by name.
+  let allRows: Array<Record<string, unknown>> = [];
+
+  for (const num of variants) {
+    const { data, error } = await supabase
+      .from('cards')
+      .select('*, sets!inner(id, name, series, language)')
+      .eq('number', num)
+      .eq('sets.language', langFilter)
+      .limit(100);  // Fetch many so name ranking can actually find the right card
+
+    if (!error && data && data.length > 0) {
+      allRows = data;
+      break;
+    }
+  }
+
+  if (allRows.length === 0) return [];
+
+  const results = rowsToMatches(allRows);
+
+  // Rank by name match
   if (nameHint && nameHint.length >= 2) {
     const hint = nameHint.toLowerCase().trim();
     for (const r of results) {
       const name = r.name.toLowerCase();
       const nameEn = (r.name_en ?? '').toLowerCase();
 
-      // Exact match
       if (name === hint || nameEn === hint) {
         r.confidence = 0.99;
-      }
-      // Substring match (OCR read "Ferroseed" and card name contains it or vice versa)
-      else if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
+      } else if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
         r.confidence = 0.95;
-      }
-      // No name match at all — penalize heavily so matching names always win
-      else {
+      } else {
         r.confidence = 0.30;
       }
     }
   }
 
-  // Use set hint to disambiguate — match against set_id code (most reliable)
-  if (setHint && setHint.length >= 2) {
-    const hint = setHint.toLowerCase();
-    for (const r of results) {
-      const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
-      if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
-        r.confidence = Math.min(0.99, r.confidence + 0.10);
-      } else {
-        const sname = r.set_name.toLowerCase();
-        if (sname.includes(hint) || hint.includes(sname)) {
-          r.confidence = Math.min(0.99, r.confidence + 0.04);
-        }
+  applySetHint(results, setHint);
+  results.sort((a, b) => b.confidence - a.confidence);
+  return results.slice(0, topK);
+}
+
+/** Boost confidence for cards matching the OCR set code. */
+function applySetHint(results: ScanMatch[], setHint: string): void {
+  if (!setHint || setHint.length < 2) return;
+  const hint = setHint.toLowerCase();
+  for (const r of results) {
+    const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
+    if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
+      r.confidence = Math.min(0.99, r.confidence + 0.10);
+    } else {
+      const sname = r.set_name.toLowerCase();
+      if (sname.includes(hint) || hint.includes(sname)) {
+        r.confidence = Math.min(0.99, r.confidence + 0.04);
       }
     }
   }
-
-  results.sort((a, b) => b.confidence - a.confidence);
-  return results.slice(0, topK);
 }
 
 /** Search cards by fuzzy name match. */
