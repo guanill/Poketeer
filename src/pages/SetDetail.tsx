@@ -28,7 +28,9 @@ export function SetDetail() {
   const [gridSize, setGridSize] = useState<'small' | 'large'>('small');
   const PAGE_SIZE = 60;
 
-  const hasActiveFilters = sortBy !== 'number' || typeFilter !== null;
+  // Always fetch all cards — sets are small enough (max ~400) and we need
+  // the full list for correct numeric sorting (DB sorts number as text).
+  const hasActiveFilters = true;
 
   const owned = useCollectionStore(s => s.owned);
 
