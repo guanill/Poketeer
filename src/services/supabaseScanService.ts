@@ -255,7 +255,8 @@ async function searchByNumber(
     variants.add(numOnly.padStart(2, '0'));
   }
 
-  const langFilter = lang === 'ja' ? 'ja' : 'en';
+  // Map language to DB filter — TH cards are stored with language 'th'
+  const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
   let allRows: Array<Record<string, unknown>> = [];
 
   for (const num of variants) {
@@ -268,7 +269,7 @@ async function searchByNumber(
 
     if (!error && data && data.length > 0) {
       allRows = data;
-      break; // Found matches, stop trying variants
+      break;
     }
   }
 
@@ -304,13 +305,20 @@ async function searchByNumber(
     }
   }
 
-  // Use set hint from bottom OCR text to disambiguate same-numbered cards across sets
+  // Use set hint to disambiguate — match against set_id code (most reliable)
   if (setHint && setHint.length >= 2) {
     const hint = setHint.toLowerCase();
     for (const r of results) {
-      const sname = r.set_name.toLowerCase();
-      if (sname.includes(hint) || hint.includes(sname)) {
-        r.confidence = Math.min(0.99, r.confidence + 0.04);
+      // Extract the code part from set_id (e.g. "SV6-en" → "sv6")
+      const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
+      if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
+        r.confidence = Math.min(0.99, r.confidence + 0.10);
+      } else {
+        // Also try matching against set name
+        const sname = r.set_name.toLowerCase();
+        if (sname.includes(hint) || hint.includes(sname)) {
+          r.confidence = Math.min(0.99, r.confidence + 0.04);
+        }
       }
     }
   }
@@ -334,6 +342,7 @@ async function searchByName(
 
   const filtered = data.filter(row => {
     if (lang === 'ja') return row.set_id.endsWith('-ja');
+    if (lang === 'th') return row.set_id.endsWith('-th');
     return !row.set_id.endsWith('-ja') && !row.set_id.endsWith('-th');
   });
 
@@ -533,6 +542,19 @@ export async function supabaseScan(
 
   if (ocrMatches.length === 0 && nameQuery.length >= 1) {
     ocrMatches = await searchByName(nameQuery, topK, effectiveLang);
+  }
+
+  // If auto-detected language found nothing, retry with other languages
+  if (ocrMatches.length === 0 && usedPaddle && cardNumber) {
+    const otherLangs: ScanLanguage[] = (['en', 'ja', 'th'] as const).filter(l => l !== effectiveLang);
+    for (const tryLang of otherLangs) {
+      ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, tryLang, setHint);
+      if (ocrMatches.length > 0) {
+        effectiveLang = tryLang;
+        console.log('[scan] Retried with lang:', tryLang, '→ found', ocrMatches.length, 'matches');
+        break;
+      }
+    }
   }
 
   // Retry with wider bottom crop (bottom 25%) if nothing found yet — Tesseract only
