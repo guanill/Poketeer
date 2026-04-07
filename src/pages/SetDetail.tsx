@@ -108,19 +108,18 @@ export function SetDetail() {
     if (typeFilter) cards = cards.filter(c => c.types?.includes(typeFilter));
 
     // Sorting
-    if (sortBy !== 'number') {
-      cards = [...cards].sort((a, b) => {
-        switch (sortBy) {
-          case 'name-asc': return a.name.localeCompare(b.name);
-          case 'name-desc': return b.name.localeCompare(a.name);
-          case 'rarity-asc': return getRarityRank(a.rarity) - getRarityRank(b.rarity);
-          case 'rarity-desc': return getRarityRank(b.rarity) - getRarityRank(a.rarity);
-          case 'price-desc': return (getCardMarketPrice(b) ?? 0) - (getCardMarketPrice(a) ?? 0);
-          case 'price-asc': return (getCardMarketPrice(a) ?? 0) - (getCardMarketPrice(b) ?? 0);
-          default: return 0;
-        }
-      });
-    }
+    cards = [...cards].sort((a, b) => {
+      switch (sortBy) {
+        case 'number': return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+        case 'name-asc': return a.name.localeCompare(b.name);
+        case 'name-desc': return b.name.localeCompare(a.name);
+        case 'rarity-asc': return getRarityRank(a.rarity) - getRarityRank(b.rarity);
+        case 'rarity-desc': return getRarityRank(b.rarity) - getRarityRank(a.rarity);
+        case 'price-desc': return (getCardMarketPrice(b) ?? 0) - (getCardMarketPrice(a) ?? 0);
+        case 'price-asc': return (getCardMarketPrice(a) ?? 0) - (getCardMarketPrice(b) ?? 0);
+        default: return 0;
+      }
+    });
 
     return cards;
   }, [sourceCards, filterOwned, owned, typeFilter, sortBy]);
