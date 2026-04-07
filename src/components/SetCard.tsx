@@ -26,6 +26,9 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
   };
 
   const isComplete = progress === 100;
+  const isIntl = set.language === 'ja' || set.language === 'th';
+  const isIntlLogo = isIntl && !!set.images.logo;
+  const isEnLogo = !isIntl && !!set.images.logo;
   // Cap stagger so cards beyond the 20th don't wait 4+ seconds to animate in
   const delay = Math.min(index, 20) * 0.04;
 
@@ -72,105 +75,155 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
         }}
       />
 
-      {/* Set logo / banner */}
-      <div className="relative h-16 flex items-center justify-center overflow-hidden"
-        style={{ background: set.images.logo ? undefined : `linear-gradient(135deg, ${getProgressColor()}18 0%, ${getProgressColor()}06 100%)` }}
-      >
-        {set.images.logo ? (
-          <>
-            <div className="absolute inset-0 bg-white/3" />
-            <img
-              src={set.images.logo}
-              alt={set.name}
-              loading={index < 6 ? 'eager' : 'lazy'}
-              decoding="async"
-              className="relative h-full w-full object-contain px-4 py-2"
-              onError={(e) => {
-                const img = e.target as HTMLImageElement;
-                img.style.display = 'none';
-                const banner = img.parentElement?.querySelector('.name-banner') as HTMLElement | null;
-                if (banner) banner.style.display = 'flex';
-              }}
-            />
-            {/* shown only if img 404s */}
-            <div className="name-banner absolute inset-0 items-center justify-center px-3" style={{ display: 'none' }}>
-              <span className="text-white font-bold text-sm text-center line-clamp-2 leading-tight drop-shadow">{set.name}</span>
-            </div>
-          </>
-        ) : (
-          /* No logo available (JP/TH) — pokeball + name */
-          <>
-            <div className="absolute -right-4 -top-4 w-20 h-20 rounded-full opacity-20 blur-xl"
-              style={{ background: getProgressColor() }} />
-            <div className="relative flex items-center gap-2.5 px-3 w-full">
-              <svg className="shrink-0 w-7 h-7 opacity-60" viewBox="0 0 100 100" fill="none">
-                <circle cx="50" cy="50" r="46" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
-                <line x1="4" y1="50" x2="36" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
-                <line x1="64" y1="50" x2="96" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
-                <circle cx="50" cy="50" r="14" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
-                <circle cx="50" cy="50" r="6" fill="currentColor" className="text-gray-500" />
-              </svg>
-              <span className="text-white/85 font-bold text-sm line-clamp-2 leading-tight">{set.name}</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="p-3 pt-2.5">
-        <div className="flex items-start gap-2">
-          <div className="flex-1 min-w-0">
-            <h3 className="font-bold text-white text-sm line-clamp-1 group-hover:text-yellow-400 transition-colors">
-              {set.name}
-            </h3>
-            <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
-            <div className="flex items-center gap-3 mt-1.5">
-              <div className="flex items-center gap-1 text-xs text-gray-500">
-                <Hash size={10} />
-                {set.total} cards
-              </div>
-              <div className="flex items-center gap-1 text-xs text-gray-500">
-                <Calendar size={10} />
-                {set.releaseDate?.split('/')[0] ?? '—'}
-              </div>
-            </div>
-          </div>
-
-          {/* Progress Ring */}
-          <ProgressRing
-            progress={progress}
-            size={44}
-            strokeWidth={4}
-            color={getProgressColor()}
-          >
-            <span className="text-xs font-bold" style={{ color: getProgressColor() }}>
-              {progress}%
-            </span>
-          </ProgressRing>
-        </div>
-
-        {/* HP-bar style progress */}
-        <div className="mt-2.5">
-          <div className="flex items-center justify-between text-xs mb-1">
-            <span className="text-gray-500 font-bold">
-              {ownedCount}/{set.total} collected
-            </span>
-          </div>
-          <div className="hp-bar-track">
-            <motion.div
-              className={`hp-bar-fill ${
-                progress === 100 ? 'hp-bar-full'
-                : progress >= 75  ? 'hp-bar-high'
-                : progress >= 40  ? 'hp-bar-mid'
-                : progress > 0    ? 'hp-bar-low'
-                : 'hp-bar-empty'
-              }`}
-              initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.8, delay: delay + 0.2, ease: [0.34, 1.56, 0.64, 1] }}
-            />
+      {/* EN sets: wide logo banner on top */}
+      {isEnLogo && (
+        <div className="relative h-16 flex items-center justify-center overflow-hidden">
+          <div className="absolute inset-0 bg-white/3" />
+          <img
+            src={set.images.logo}
+            alt={set.name}
+            loading={index < 6 ? 'eager' : 'lazy'}
+            decoding="async"
+            className="relative h-full w-full object-contain px-4 py-2"
+            onError={(e) => {
+              const img = e.target as HTMLImageElement;
+              img.style.display = 'none';
+              const banner = img.parentElement?.querySelector('.name-banner') as HTMLElement | null;
+              if (banner) banner.style.display = 'flex';
+            }}
+          />
+          <div className="name-banner absolute inset-0 items-center justify-center px-3" style={{ display: 'none' }}>
+            <span className="text-white font-bold text-sm text-center line-clamp-2 leading-tight drop-shadow">{set.name}</span>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Intl sets with pack image: image left, info right */}
+      {isIntlLogo ? (
+        <div className="flex gap-3 p-3">
+          <img
+            src={set.images.logo}
+            alt={set.name}
+            loading={index < 6 ? 'eager' : 'lazy'}
+            decoding="async"
+            className="shrink-0 w-20 h-24 object-contain rounded-lg"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+          <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+            <div>
+              <h3 className="font-bold text-white text-sm line-clamp-2 leading-tight group-hover:text-yellow-400 transition-colors">
+                {set.name}
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
+              <div className="flex items-center gap-3 mt-1">
+                <div className="flex items-center gap-1 text-xs text-gray-500">
+                  <Hash size={10} />
+                  {set.total} cards
+                </div>
+                <div className="flex items-center gap-1 text-xs text-gray-500">
+                  <Calendar size={10} />
+                  {set.releaseDate?.split('/')[0] ?? '—'}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex-1 hp-bar-track">
+                <motion.div
+                  className={`hp-bar-fill ${
+                    progress === 100 ? 'hp-bar-full'
+                    : progress >= 75  ? 'hp-bar-high'
+                    : progress >= 40  ? 'hp-bar-mid'
+                    : progress > 0    ? 'hp-bar-low'
+                    : 'hp-bar-empty'
+                  }`}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.8, delay: delay + 0.2, ease: [0.34, 1.56, 0.64, 1] }}
+                />
+              </div>
+              <span className="text-xs font-bold shrink-0" style={{ color: getProgressColor() }}>
+                {progress}%
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* No logo / EN logo: standard vertical layout */}
+          {!isEnLogo && (
+            <div className="relative h-16 flex items-center justify-center overflow-hidden"
+              style={{ background: `linear-gradient(135deg, ${getProgressColor()}18 0%, ${getProgressColor()}06 100%)` }}
+            >
+              <div className="absolute -right-4 -top-4 w-20 h-20 rounded-full opacity-20 blur-xl"
+                style={{ background: getProgressColor() }} />
+              <div className="relative flex items-center gap-2.5 px-3 w-full">
+                <svg className="shrink-0 w-7 h-7 opacity-60" viewBox="0 0 100 100" fill="none">
+                  <circle cx="50" cy="50" r="46" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                  <line x1="4" y1="50" x2="36" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                  <line x1="64" y1="50" x2="96" y2="50" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                  <circle cx="50" cy="50" r="14" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
+                  <circle cx="50" cy="50" r="6" fill="currentColor" className="text-gray-500" />
+                </svg>
+                <span className="text-white/85 font-bold text-sm line-clamp-2 leading-tight">{set.name}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="p-3 pt-2.5">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-white text-sm line-clamp-1 group-hover:text-yellow-400 transition-colors">
+                  {set.name}
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <Hash size={10} />
+                    {set.total} cards
+                  </div>
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <Calendar size={10} />
+                    {set.releaseDate?.split('/')[0] ?? '—'}
+                  </div>
+                </div>
+              </div>
+
+              <ProgressRing
+                progress={progress}
+                size={44}
+                strokeWidth={4}
+                color={getProgressColor()}
+              >
+                <span className="text-xs font-bold" style={{ color: getProgressColor() }}>
+                  {progress}%
+                </span>
+              </ProgressRing>
+            </div>
+
+            <div className="mt-2.5">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-gray-500 font-bold">
+                  {ownedCount}/{set.total} collected
+                </span>
+              </div>
+              <div className="hp-bar-track">
+                <motion.div
+                  className={`hp-bar-fill ${
+                    progress === 100 ? 'hp-bar-full'
+                    : progress >= 75  ? 'hp-bar-high'
+                    : progress >= 40  ? 'hp-bar-mid'
+                    : progress > 0    ? 'hp-bar-low'
+                    : 'hp-bar-empty'
+                  }`}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.8, delay: delay + 0.2, ease: [0.34, 1.56, 0.64, 1] }}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </motion.div>
   );
 });
