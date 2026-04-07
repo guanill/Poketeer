@@ -29,6 +29,11 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
   const isIntl = set.language === 'ja' || set.language === 'th';
   const isIntlLogo = isIntl && !!set.images.logo;
   const isEnLogo = !isIntl && !!set.images.logo;
+
+  // Split "Thai name (English name)" into two lines for intl sets
+  const enMatch = isIntl ? set.name.match(/^(.+?)\s*\(([^)]+)\)\s*$/) : null;
+  const localName = enMatch ? enMatch[1] : set.name;
+  const enName = enMatch ? enMatch[2] : null;
   // Cap stagger so cards beyond the 20th don't wait 4+ seconds to animate in
   const delay = Math.min(index, 20) * 0.04;
 
@@ -112,8 +117,9 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
           <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
             <div>
               <h3 className="font-bold text-white text-sm line-clamp-2 leading-tight group-hover:text-yellow-400 transition-colors">
-                {set.name}
+                {localName}
               </h3>
+              {enName && <p className="text-[11px] text-gray-400 leading-tight">{enName}</p>}
               <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
               <div className="flex items-center gap-3 mt-1">
                 <div className="flex items-center gap-1 text-xs text-gray-500">
@@ -164,7 +170,7 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
                   <circle cx="50" cy="50" r="14" stroke="currentColor" strokeWidth="6" className="text-gray-400" />
                   <circle cx="50" cy="50" r="6" fill="currentColor" className="text-gray-500" />
                 </svg>
-                <span className="text-white/85 font-bold text-sm line-clamp-2 leading-tight">{set.name}</span>
+                <span className="text-white/85 font-bold text-sm line-clamp-2 leading-tight">{localName}</span>
               </div>
             </div>
           )}
@@ -173,8 +179,9 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
             <div className="flex items-start gap-2">
               <div className="flex-1 min-w-0">
                 <h3 className="font-bold text-white text-sm line-clamp-1 group-hover:text-yellow-400 transition-colors">
-                  {set.name}
+                  {localName}
                 </h3>
+                {enName && <p className="text-[11px] text-gray-400 leading-tight">{enName}</p>}
                 <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
                 <div className="flex items-center gap-3 mt-1.5">
                   <div className="flex items-center gap-1 text-xs text-gray-500">
