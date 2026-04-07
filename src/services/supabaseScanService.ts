@@ -236,6 +236,62 @@ function extractNameQuery(text: string, lang: ScanLanguage): string {
   return lines[0];
 }
 
+// ── Fuzzy string matching ────────────────────────────────────────────────────
+
+/** Levenshtein edit distance between two strings. */
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Fuzzy similarity between two strings (0–1, higher = more similar).
+ * Combines normalized edit distance with a "characters in common" check
+ * so that "frrseed" vs "Ferroseed" scores high.
+ */
+function fuzzySimilarity(a: string, b: string): number {
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  if (la === lb) return 1;
+
+  const maxLen = Math.max(la.length, lb.length);
+  if (maxLen === 0) return 1;
+
+  // Normalized edit distance score
+  const dist = editDistance(la, lb);
+  const editScore = 1 - dist / maxLen;
+
+  // Substring bonus: if one contains the other
+  if (la.includes(lb) || lb.includes(la)) return Math.max(editScore, 0.9);
+
+  return editScore;
+}
+
+/** Score how well an OCR name hint matches a card name. Returns 0–0.99. */
+function nameMatchScore(hint: string, cardName: string, cardNameEn: string): number {
+  const bestSim = Math.max(
+    fuzzySimilarity(hint, cardName),
+    cardNameEn ? fuzzySimilarity(hint, cardNameEn) : 0,
+  );
+
+  // >= 0.85 similarity: very likely the same name (e.g. "frrseed" vs "Ferroseed" = ~0.78 edit, but with substring logic higher)
+  if (bestSim >= 0.90) return 0.99;
+  if (bestSim >= 0.75) return 0.90;
+  if (bestSim >= 0.60) return 0.70;
+  if (bestSim >= 0.45) return 0.50;
+  return 0.20;  // Very different name
+}
+
 // ── Supabase search helpers ──────────────────────────────────────────────────
 
 /** Convert DB rows to ScanMatch objects. */
@@ -320,20 +376,11 @@ async function searchByNumber(
 
   const results = rowsToMatches(allRows);
 
-  // Rank by name match
+  // Rank by fuzzy name match
   if (nameHint && nameHint.length >= 2) {
-    const hint = nameHint.toLowerCase().trim();
+    const hint = nameHint.trim();
     for (const r of results) {
-      const name = r.name.toLowerCase();
-      const nameEn = (r.name_en ?? '').toLowerCase();
-
-      if (name === hint || nameEn === hint) {
-        r.confidence = 0.99;
-      } else if (name.includes(hint) || hint.includes(name) || nameEn.includes(hint) || hint.includes(nameEn)) {
-        r.confidence = 0.95;
-      } else {
-        r.confidence = 0.30;
-      }
+      r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '');
     }
   }
 
