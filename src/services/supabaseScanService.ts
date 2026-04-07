@@ -21,16 +21,17 @@ interface PaddleOcrResult {
   name: string;
   number: string;
   set_code: string;
+  detected_lang?: 'en' | 'ja' | 'th';
   all_text: Array<{ text: string; confidence: number; region: string; position: { y_center: number; x_center: number } }>;
 }
 
-async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage): Promise<PaddleOcrResult | null> {
+async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage | 'auto' = 'auto'): Promise<PaddleOcrResult | null> {
   try {
     const formData = new FormData();
     formData.append('file', imageFile);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
 
     const res = await fetch(`${HF_OCR_URL}/ocr?lang=${lang}`, {
       method: 'POST',
@@ -459,30 +460,37 @@ export async function supabaseScan(
   topK = 5,
   lang: ScanLanguage = 'en',
 ): Promise<ScanResult> {
-  // 1. Start visual matching immediately (runs in parallel with OCR)
-  const visualPromise = tryVisualMatch(imageFile, topK, lang).catch(() => [] as ScanMatch[]);
-
-  // 2. Try PaddleOCR first (cloud, high accuracy)
+  // 2. Try PaddleOCR first (cloud, high accuracy, auto-detect language)
   let cardNumber: string | null = null;
   let nameQuery = '';
   let setHint = '';
   let ocrText = '';
   let usedPaddle = false;
+  let effectiveLang = lang;  // May be overridden by auto-detection
 
-  const paddleResult = await tryPaddleOcr(imageFile, lang);
+  const paddleResult = await tryPaddleOcr(imageFile, 'auto');
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;
     cardNumber = paddleResult.number || null;
     nameQuery = paddleResult.name;
     setHint = paddleResult.set_code;
-    ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${paddleResult.number} | set: ${paddleResult.set_code}`;
+
+    // Use auto-detected language for DB search
+    if (paddleResult.detected_lang) {
+      effectiveLang = paddleResult.detected_lang;
+    }
+
+    ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${paddleResult.number} | set: ${paddleResult.set_code} | lang: ${effectiveLang}`;
 
     console.log('[scan] PaddleOCR →', ocrText);
     if (paddleResult.all_text) {
       console.log('[scan] all text:', paddleResult.all_text.map(t => `${t.region}: "${t.text}" (${t.confidence})`).join(', '));
     }
   }
+
+  // 1. Start visual matching (after we know the effective language)
+  const visualPromise = tryVisualMatch(imageFile, topK, effectiveLang).catch(() => [] as ScanMatch[]);
 
   // 3. Fallback: client-side Tesseract.js if PaddleOCR failed
   if (!usedPaddle) {
@@ -520,20 +528,20 @@ export async function supabaseScan(
   let ocrMatches: ScanMatch[] = [];
 
   if (cardNumber) {
-    ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, lang, setHint);
+    ocrMatches = await searchByNumber(cardNumber, nameQuery, topK, effectiveLang, setHint);
   }
 
   if (ocrMatches.length === 0 && nameQuery.length >= 1) {
-    ocrMatches = await searchByName(nameQuery, topK, lang);
+    ocrMatches = await searchByName(nameQuery, topK, effectiveLang);
   }
 
   // Retry with wider bottom crop (bottom 25%) if nothing found yet — Tesseract only
   if (ocrMatches.length === 0 && !usedPaddle) {
     try {
-      const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, lang);
+      const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, effectiveLang);
       const wideNumber = extractCardNumber(wideBottom.text);
       if (wideNumber) {
-        ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, lang);
+        ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, effectiveLang);
       }
     } catch { /* ignore */ }
   }
@@ -541,14 +549,14 @@ export async function supabaseScan(
   // Last resort: full-image OCR — Tesseract only
   if (ocrMatches.length === 0 && !usedPaddle) {
     try {
-      const fullResult = await ocrMultiPass(imageFile, 0, 1, 1, NAME_PROFILES.slice(0, 1), lang);
+      const fullResult = await ocrMultiPass(imageFile, 0, 1, 1, NAME_PROFILES.slice(0, 1), effectiveLang);
       const fullNumber = extractCardNumber(fullResult.text);
-      const fullName = extractNameQuery(fullResult.text, lang);
+      const fullName = extractNameQuery(fullResult.text, effectiveLang);
       if (fullNumber) {
-        ocrMatches = await searchByNumber(fullNumber, fullName, topK, lang);
+        ocrMatches = await searchByNumber(fullNumber, fullName, topK, effectiveLang);
       }
       if (ocrMatches.length === 0 && fullName.length >= 2) {
-        ocrMatches = await searchByName(fullName, topK, lang);
+        ocrMatches = await searchByName(fullName, topK, effectiveLang);
       }
     } catch { /* ignore */ }
   }
@@ -560,8 +568,8 @@ export async function supabaseScan(
     ? mergeResults(ocrMatches, visualMatches, topK)
     : ocrMatches;
 
-  // Enrich Japanese matches with English names
-  if (lang === 'ja' && matches.length > 0) {
+  // Enrich non-English matches with English names
+  if (effectiveLang !== 'en' && matches.length > 0) {
     const jaIds = matches.filter(m => !m.name_en).map(m => m.id);
     if (jaIds.length > 0) {
       const { data } = await supabase

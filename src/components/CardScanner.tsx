@@ -236,14 +236,27 @@ function JobCard({
           {job.status === 'error' && (
             <p className="text-[10px] text-gray-500 mt-0.5 truncate">{job.errorMsg}</p>
           )}
-          {job.status === 'done' && rawOcrText && (
-            <p className="text-[10px] text-gray-600 mt-0.5 truncate" title={rawOcrText}>
-              Read: <span className="text-gray-500">{ocrHint || rawOcrText.split('\n')[0]}</span>
-              {rawOcrText.includes('[bottom]') && (
-                <span className="text-gray-600"> · #{rawOcrText.split('[bottom]')[1]?.trim().split('\n')[0]}</span>
-              )}
-            </p>
-          )}
+          {job.status === 'done' && rawOcrText && (() => {
+            // Parse PaddleOCR structured output
+            const paddleMatch = rawOcrText.match(/\[PaddleOCR\] name: (.*?) \| number: (.*?) \| set: (.*?) \| lang: (.*)/);
+            if (paddleMatch) {
+              const [, ocrName, ocrNum, ocrSet, ocrLang] = paddleMatch;
+              return (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                  {ocrName && <span className="text-[10px] text-gray-500">Name: <span className="text-purple-400/80 font-medium">{ocrName}</span></span>}
+                  {ocrNum && <span className="text-[10px] text-gray-500">#{ocrNum}</span>}
+                  {ocrSet && <span className="text-[10px] text-gray-500">Set: <span className="text-blue-400/70">{ocrSet}</span></span>}
+                  <span className="text-[10px] text-gray-600 uppercase">{ocrLang}</span>
+                </div>
+              );
+            }
+            // Fallback for Tesseract text
+            return (
+              <p className="text-[10px] text-gray-600 mt-0.5 truncate" title={rawOcrText}>
+                Read: <span className="text-gray-500">{ocrHint || rawOcrText.split('\n')[0]}</span>
+              </p>
+            );
+          })()}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -263,35 +276,6 @@ function JobCard({
           </button>
         </div>
       </div>
-
-      {/* OCR crop previews — shows what regions the scanner read */}
-      {job.status === 'done' && (job.result?.cropNameUrl || job.result?.cropNumberUrl) && (
-        <div className="px-3 pb-2 border-t border-white/5 pt-2">
-          <p className="text-[10px] text-gray-600 font-semibold mb-1.5">What the scanner sees:</p>
-          <div className="flex gap-2">
-            {job.result?.cropNameUrl && (
-              <div className="flex-1 min-w-0">
-                <p className="text-[9px] text-gray-600 mb-0.5">Name region</p>
-                <img
-                  src={job.result.cropNameUrl}
-                  alt="Name crop"
-                  className="w-full rounded border border-white/10 bg-black"
-                />
-              </div>
-            )}
-            {job.result?.cropNumberUrl && (
-              <div className="flex-1 min-w-0">
-                <p className="text-[9px] text-gray-600 mb-0.5">Number region</p>
-                <img
-                  src={job.result.cropNumberUrl}
-                  alt="Number crop"
-                  className="w-full rounded border border-white/10 bg-black"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Manual search fallback */}
       <AnimatePresence>
