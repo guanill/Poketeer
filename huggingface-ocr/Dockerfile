@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download PaddleOCR models at build time so startup is fast
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_gpu=False, show_log=False); PaddleOCR(lang='japan', use_gpu=False, show_log=False); PaddleOCR(lang='th', use_gpu=False, show_log=False)"
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_gpu=False, show_log=False); PaddleOCR(lang='japan', use_gpu=False, show_log=False)"
 
 COPY app.py .
 

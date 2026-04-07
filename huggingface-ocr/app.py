@@ -42,16 +42,12 @@ ocr_ja = PaddleOCR(
     rec_batch_num=8,
 )
 
-ocr_th = PaddleOCR(
-    use_angle_cls=True,
-    lang="th",
-    use_gpu=False,
-    show_log=False,
-    det_db_thresh=0.3,
-    rec_batch_num=8,
-)
+# Note: PaddleOCR has no Thai model. For TH cards we use the EN engine
+# to read the card number and set code (always Latin text), which is
+# sufficient to identify the card via DB lookup.
+ocr_th = ocr_en  # Alias — Thai cards use EN engine
 
-print("[poketeer-ocr] PaddleOCR loaded (EN + JA + TH)")
+print("[poketeer-ocr] PaddleOCR loaded (EN + JA; TH uses EN engine)")
 
 # ---------------------------------------------------------------------------
 # Image preprocessing
