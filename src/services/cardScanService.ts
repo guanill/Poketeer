@@ -2,7 +2,7 @@ import { isNativePlatform } from '../utils/platform';
 import { nativeScanCard, nativeCheckHealth } from './nativeScanService';
 import { supabaseScan } from './supabaseScanService';
 
-export type ScanLanguage = 'en' | 'ja';
+export type ScanLanguage = 'en' | 'ja' | 'th';
 
 export interface ScanMatch {
   id: string;
