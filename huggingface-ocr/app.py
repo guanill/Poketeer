@@ -13,6 +13,7 @@ Supports EN, JA, TH with auto-detection.
 import io
 import re
 
+import cv2
 import numpy as np
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +52,159 @@ ocr_th = PaddleOCR(
 )
 
 print("[poketeer-ocr] PaddleOCR loaded (EN + JA + TH)")
+
+# ---------------------------------------------------------------------------
+# Image preprocessing
+# ---------------------------------------------------------------------------
+
+# Standard Pokemon card aspect ratio is ~2.5 x 3.5 inches → ratio ~0.714
+CARD_RATIO = 0.714
+TARGET_W = 600
+TARGET_H = int(TARGET_W / CARD_RATIO)
+
+
+def order_points(pts):
+    """Order 4 points as: top-left, top-right, bottom-right, bottom-left."""
+    rect = np.zeros((4, 2), dtype=np.float32)
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]   # top-left has smallest sum
+    rect[2] = pts[np.argmax(s)]   # bottom-right has largest sum
+    d = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(d)]   # top-right has smallest difference
+    rect[3] = pts[np.argmax(d)]   # bottom-left has largest difference
+    return rect
+
+
+def find_card_contour(img_bgr):
+    """
+    Try to find a card-shaped rectangle in the image.
+    Returns 4 corner points or None if not found.
+    """
+    h, w = img_bgr.shape[:2]
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Try multiple edge detection thresholds
+    for low, high in [(30, 100), (50, 150), (20, 80)]:
+        edges = cv2.Canny(blurred, low, high)
+        # Dilate to close gaps in edges
+        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
+
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+            area = cv2.contourArea(cnt)
+            # Card should be at least 10% of image area
+            if area < (w * h * 0.10):
+                continue
+
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+
+            if len(approx) == 4:
+                pts = approx.reshape(4, 2).astype(np.float32)
+                ordered = order_points(pts)
+
+                # Check aspect ratio is roughly card-shaped (0.5–0.9)
+                widthA = np.linalg.norm(ordered[1] - ordered[0])
+                widthB = np.linalg.norm(ordered[2] - ordered[3])
+                heightA = np.linalg.norm(ordered[3] - ordered[0])
+                heightB = np.linalg.norm(ordered[2] - ordered[1])
+                avg_w = (widthA + widthB) / 2
+                avg_h = (heightA + heightB) / 2
+
+                if avg_h < 1:
+                    continue
+
+                ratio = avg_w / avg_h
+                # Accept cards in portrait (0.55-0.85) or landscape (1.2-1.8)
+                if 0.55 <= ratio <= 0.85 or 1.2 <= ratio <= 1.8:
+                    return ordered
+
+    return None
+
+
+def perspective_correct(img_bgr, corners):
+    """Warp the card to a flat, upright rectangle."""
+    ordered = order_points(corners)
+
+    # Determine if landscape (wider than tall) and rotate
+    widthA = np.linalg.norm(ordered[1] - ordered[0])
+    heightA = np.linalg.norm(ordered[3] - ordered[0])
+    is_landscape = widthA > heightA * 1.1
+
+    if is_landscape:
+        dst_w, dst_h = TARGET_H, TARGET_W
+    else:
+        dst_w, dst_h = TARGET_W, TARGET_H
+
+    dst = np.array([
+        [0, 0],
+        [dst_w - 1, 0],
+        [dst_w - 1, dst_h - 1],
+        [0, dst_h - 1],
+    ], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(ordered, dst)
+    warped = cv2.warpPerspective(img_bgr, M, (dst_w, dst_h))
+
+    # If landscape, rotate to portrait
+    if is_landscape:
+        warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
+
+    return warped
+
+
+def enhance_for_ocr(img_bgr):
+    """
+    Enhance image for better OCR:
+    - Auto white balance
+    - Contrast normalization (CLAHE)
+    - Sharpening
+    """
+    # Convert to LAB for better contrast handling
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    # CLAHE on lightness channel — adaptive contrast
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+
+    lab = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    # Sharpen
+    kernel = np.array([
+        [0, -0.5, 0],
+        [-0.5, 3, -0.5],
+        [0, -0.5, 0],
+    ])
+    enhanced = cv2.filter2D(enhanced, -1, kernel)
+
+    return enhanced
+
+
+def preprocess_card(img_array: np.ndarray) -> np.ndarray:
+    """
+    Full preprocessing pipeline:
+    1. Try to find and perspective-correct the card
+    2. Enhance contrast and sharpness for OCR
+    Returns the processed image as a numpy array (RGB).
+    """
+    # Convert RGB to BGR for OpenCV
+    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+
+    # Step 1: Try perspective correction
+    corners = find_card_contour(img_bgr)
+    if corners is not None:
+        img_bgr = perspective_correct(img_bgr, corners)
+
+    # Step 2: Enhance for OCR
+    img_bgr = enhance_for_ocr(img_bgr)
+
+    # Convert back to RGB
+    return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
 
 # ---------------------------------------------------------------------------
 # Language detection
@@ -360,8 +514,11 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
     """
     contents = await file.read()
     img = Image.open(io.BytesIO(contents)).convert("RGB")
-    img_w, img_h = img.size
     img_array = np.array(img)
+
+    # Preprocess: perspective correction + contrast/sharpness enhancement
+    img_array = preprocess_card(img_array)
+    img_h, img_w = img_array.shape[:2]
 
     if lang == "auto":
         # Step 1: Run EN engine (fastest) to get raw text + positions
