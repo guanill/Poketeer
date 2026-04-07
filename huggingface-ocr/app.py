@@ -207,20 +207,41 @@ def extract_card_info(ocr_results, img_w, img_h):
         })
 
     # ── Extract card name ──
-    # Primary: highest confidence text in name region
+    # The card name is top-center. Stage labels ("Basic", "Stage 1", "たね",
+    # "พื้นฐาน") sit in the top-LEFT (x < 0.30). HP is top-RIGHT (x > 0.70).
+    # So we prioritize text in the center of the name region.
+    _STAGE_RE = re.compile(
+        r"^("
+        r"Stage\s*[0-9]|Basic|BASIC|STAGE|Mega|MEGA|BREAK|Restored|RESTORED"
+        r"|たね|たねポケモン|1進化|2進化|進化"                       # Japanese
+        r"|พื้นฐาน|ร่าง\s*1|ร่าง\s*2|อื่น\s*ๆ"                  # Thai
+        r"|V|VSTAR|VMAX|VUNION|V-UNION|TAG\s*TEAM"               # Suffixes alone
+        r")\s*$", re.I
+    )
+
     name_texts = [t for t in texts if t["region"] == "name"]
-    name_texts.sort(key=lambda t: t["confidence"], reverse=True)
+
+    # Sort: prefer center-x text (x_center 0.30–0.70) over far-left/right,
+    # then by confidence
+    def name_sort_key(t):
+        xc = t["position"]["x_center"]
+        is_center = 0.25 <= xc <= 0.75
+        return (-int(is_center), -t["confidence"])
+
+    name_texts.sort(key=name_sort_key)
     card_name = ""
 
     if name_texts:
-        # Filter out junk (HP values, stage labels)
         for nt in name_texts:
             txt = nt["text"].strip()
-            if re.match(r"^\d+$", txt):  # Pure number = HP, skip
+            xc = nt["position"]["x_center"]
+            if re.match(r"^\d+$", txt):                    # Pure number (HP)
                 continue
-            if re.match(r"^(HP|hp)\s*\d+", txt):  # "HP 120"
+            if re.match(r"^(HP|hp)\s*\d+", txt):           # "HP 120"
                 continue
-            if re.match(r"^(Stage|Basic|BASIC|STAGE)\b", txt, re.I):
+            if _STAGE_RE.match(txt):                        # Stage label
+                continue
+            if xc < 0.20 and len(txt) <= 8:                # Far-left short text = likely stage
                 continue
             card_name = txt
             break
@@ -228,10 +249,10 @@ def extract_card_info(ocr_results, img_w, img_h):
     # Fallback: if no name found in name region, try top 25% of card
     if not card_name:
         top_quarter = [t for t in texts if t["position"]["y_center"] < 0.25]
-        top_quarter.sort(key=lambda t: t["confidence"], reverse=True)
+        top_quarter.sort(key=name_sort_key)
         for t in top_quarter:
             txt = t["text"].strip()
-            if len(txt) >= 2 and not re.match(r"^\d+$", txt):
+            if len(txt) >= 2 and not re.match(r"^\d+$", txt) and not _STAGE_RE.match(txt):
                 card_name = txt
                 break
 
