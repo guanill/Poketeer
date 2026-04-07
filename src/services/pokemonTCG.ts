@@ -11,6 +11,25 @@ if (isNativePlatform()) {
 }
 
 // ---------------------------------------------------------------------------
+// Image optimization — Supabase Storage image transforms
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a Supabase Storage public URL to a resized thumbnail URL.
+ * `/object/public/...` → `/render/image/public/...?width=W&resize=contain`
+ * This reduces JA/TH pack art from ~2MB to ~30KB.
+ */
+function optimizeLogoUrl(url: string, width = 160): string {
+  if (!url) return url;
+  // Only transform Supabase Storage URLs
+  if (!url.includes('/storage/v1/object/public/')) return url;
+  return url.replace(
+    '/storage/v1/object/public/',
+    '/storage/v1/render/image/public/',
+  ) + `?width=${width}&resize=contain`;
+}
+
+// ---------------------------------------------------------------------------
 // Shared types (re-exported so other files can keep importing from here)
 // ---------------------------------------------------------------------------
 
@@ -51,7 +70,7 @@ function rowToSet(row: {
     total: row.total,
     releaseDate: row.release_date,
     language: row.language as PokemonSet['language'],
-    images: { symbol: row.symbol_url, logo: row.logo_url },
+    images: { symbol: row.symbol_url, logo: optimizeLogoUrl(row.logo_url) },
   };
 }
 
@@ -94,7 +113,7 @@ function rowToCard(row: {
       id: s?.id ?? row.set_id,
       name: s?.name ?? '',
       series: s?.series ?? '',
-      images: { symbol: s?.symbol_url ?? '', logo: s?.logo_url ?? '' },
+      images: { symbol: s?.symbol_url ?? '', logo: optimizeLogoUrl(s?.logo_url ?? '') },
     },
     images: { small: row.image_small, large: row.image_large },
   };
