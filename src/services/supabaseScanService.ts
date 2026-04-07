@@ -315,6 +315,34 @@ function rowsToMatches(rows: Array<Record<string, unknown>>): ScanMatch[] {
   }));
 }
 
+/** Build number variants: exact, zero-padded, and nearby (±1, ±2). */
+function buildNumberVariants(cardNumber: string): { exact: string[]; nearby: string[] } {
+  const exact = new Set<string>([cardNumber]);
+  const numOnly = cardNumber.replace(/\D/g, '');
+  if (numOnly.length > 0) {
+    exact.add(numOnly);
+    exact.add(numOnly.padStart(3, '0'));
+    exact.add(numOnly.padStart(2, '0'));
+  }
+
+  // Nearby: ±1 and ±2 from the OCR number (handles off-by-one misreads)
+  const nearby = new Set<string>();
+  const n = parseInt(numOnly, 10);
+  if (!isNaN(n)) {
+    for (const offset of [-2, -1, 1, 2]) {
+      const adj = n + offset;
+      if (adj > 0) {
+        nearby.add(String(adj));
+        nearby.add(String(adj).padStart(3, '0'));
+      }
+    }
+  }
+  // Remove any that are already in exact
+  for (const e of exact) nearby.delete(e);
+
+  return { exact: [...exact], nearby: [...nearby] };
+}
+
 /** Search cards by number + optional name hint. Tries multiple number formats. */
 async function searchByNumber(
   cardNumber: string,
@@ -323,20 +351,13 @@ async function searchByNumber(
   lang: ScanLanguage,
   setHint = '',
 ): Promise<ScanMatch[]> {
-  const variants = new Set<string>([cardNumber]);
-  const numOnly = cardNumber.replace(/\D/g, '');
-  if (numOnly.length > 0) {
-    variants.add(numOnly);
-    variants.add(numOnly.padStart(3, '0'));
-    variants.add(numOnly.padStart(2, '0'));
-  }
-
+  const { exact, nearby } = buildNumberVariants(cardNumber);
   const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
 
   // Strategy 1: If we have a name, search by BOTH name and number first.
-  // This is the most precise query — returns only cards matching both.
   if (nameHint && nameHint.length >= 2) {
-    for (const num of variants) {
+    // Try exact number + name
+    for (const num of exact) {
       const { data, error } = await supabase
         .from('cards')
         .select('*, sets!inner(id, name, series, language)')
@@ -353,18 +374,38 @@ async function searchByNumber(
         return results.slice(0, topK);
       }
     }
+
+    // Try nearby numbers + name (OCR misread 68 as 69 but name is correct)
+    for (const num of nearby) {
+      const { data, error } = await supabase
+        .from('cards')
+        .select('*, sets!inner(id, name, series, language)')
+        .eq('number', num)
+        .ilike('name', `%${nameHint}%`)
+        .eq('sets.language', langFilter)
+        .limit(topK);
+
+      if (!error && data && data.length > 0) {
+        const results = rowsToMatches(data);
+        // Slightly lower confidence — number was off but name matched
+        for (const r of results) r.confidence = 0.92;
+        applySetHint(results, setHint);
+        results.sort((a, b) => b.confidence - a.confidence);
+        return results.slice(0, topK);
+      }
+    }
   }
 
-  // Strategy 2: Search by number only, fetch more results so we can rank by name.
+  // Strategy 2: Search by exact number only, rank by name.
   let allRows: Array<Record<string, unknown>> = [];
 
-  for (const num of variants) {
+  for (const num of exact) {
     const { data, error } = await supabase
       .from('cards')
       .select('*, sets!inner(id, name, series, language)')
       .eq('number', num)
       .eq('sets.language', langFilter)
-      .limit(100);  // Fetch many so name ranking can actually find the right card
+      .limit(100);
 
     if (!error && data && data.length > 0) {
       allRows = data;
@@ -372,18 +413,46 @@ async function searchByNumber(
     }
   }
 
-  if (allRows.length === 0) return [];
+  // Strategy 3: Also fetch nearby numbers so we can rank across all of them.
+  const nearbyRows: Array<Record<string, unknown>> = [];
+  if (nameHint && nameHint.length >= 2) {
+    for (const num of nearby) {
+      const { data, error } = await supabase
+        .from('cards')
+        .select('*, sets!inner(id, name, series, language)')
+        .eq('number', num)
+        .eq('sets.language', langFilter)
+        .limit(50);
 
-  const results = rowsToMatches(allRows);
+      if (!error && data) nearbyRows.push(...data);
+    }
+  }
+
+  if (allRows.length === 0 && nearbyRows.length === 0) return [];
+
+  const exactResults = rowsToMatches(allRows);
+  const nearbyResults = rowsToMatches(nearbyRows);
 
   // Rank by fuzzy name match
   if (nameHint && nameHint.length >= 2) {
     const hint = nameHint.trim();
-    for (const r of results) {
+    for (const r of exactResults) {
       r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '');
+    }
+    for (const r of nearbyResults) {
+      // Nearby numbers get a slight penalty vs exact number matches
+      r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '') * 0.95;
     }
   }
 
+  // Merge exact + nearby, deduplicate by card ID
+  const merged = new Map<string, ScanMatch>();
+  for (const r of exactResults) merged.set(r.id, r);
+  for (const r of nearbyResults) {
+    if (!merged.has(r.id)) merged.set(r.id, r);
+  }
+
+  const results = [...merged.values()];
   applySetHint(results, setHint);
   results.sort((a, b) => b.confidence - a.confidence);
   return results.slice(0, topK);
