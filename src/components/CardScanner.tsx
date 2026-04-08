@@ -509,23 +509,17 @@ export function CardScanner() {
     const cardX = Math.floor((vw - cardW) / 2);
     const cardY = Math.floor((vh - cardH) / 2);
 
-    // Downscale to max 800px wide — OCR doesn't need full resolution
-    // and smaller images upload + process much faster
-    const maxW = 800;
-    const outW = Math.min(cardW, maxW);
-    const outH = Math.round(cardH * (outW / cardW));
-
     const canvas = document.createElement('canvas');
-    canvas.width = outW;
-    canvas.height = outH;
+    canvas.width = cardW;
+    canvas.height = cardH;
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, outW, outH);
+    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
 
     canvas.toBlob(blob => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       queueScan(blob, url);
-    }, 'image/jpeg', 0.85);
+    }, 'image/jpeg', 0.92);
   }, [queueScan]);
 
   // ── Auto-scan: detect card in viewfinder ──
