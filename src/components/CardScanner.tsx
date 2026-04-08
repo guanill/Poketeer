@@ -405,6 +405,10 @@ export function CardScanner() {
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
   const inlineStreamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastScanTimeRef = useRef(0);
+  const autoScanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stableFrameCountRef = useRef(0);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
 
   const [isMobile] = useState(() =>
     typeof window !== 'undefined' &&
@@ -486,7 +490,13 @@ export function CardScanner() {
 
   const captureInlineFrame = useCallback(() => {
     const video = inlineVideoRef.current;
-    if (!video) return;
+    if (!video || video.readyState < 2) return;
+
+    // Debounce — ignore taps within 1.5s of last scan
+    const now = Date.now();
+    if (now - lastScanTimeRef.current < 1500) return;
+    lastScanTimeRef.current = now;
+
     setShotFlash(true);
     setTimeout(() => setShotFlash(false), 180);
 
@@ -499,18 +509,158 @@ export function CardScanner() {
     const cardX = Math.floor((vw - cardW) / 2);
     const cardY = Math.floor((vh - cardH) / 2);
 
+    // Downscale to max 800px wide — OCR doesn't need full resolution
+    // and smaller images upload + process much faster
+    const maxW = 800;
+    const outW = Math.min(cardW, maxW);
+    const outH = Math.round(cardH * (outW / cardW));
+
     const canvas = document.createElement('canvas');
-    canvas.width = cardW;
-    canvas.height = cardH;
+    canvas.width = outW;
+    canvas.height = outH;
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, outW, outH);
 
     canvas.toBlob(blob => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       queueScan(blob, url);
-    }, 'image/jpeg', 0.92);
+    }, 'image/jpeg', 0.85);
   }, [queueScan]);
+
+  // ── Auto-scan: detect card in viewfinder ──
+  // Sample the guide area every 600ms and check for card-like content.
+  // A card is detected when the edge contrast along the guide border
+  // exceeds a threshold for 3 consecutive frames (~1.8s of stability).
+  useEffect(() => {
+    if (!isMobile || !autoScanEnabled) {
+      if (autoScanTimerRef.current) {
+        clearInterval(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
+      return;
+    }
+
+    const checkForCard = () => {
+      const video = inlineVideoRef.current;
+      if (!video || video.readyState < 2) return;
+      // Don't auto-scan if a scan is already running or was triggered recently
+      if (Date.now() - lastScanTimeRef.current < 3000) {
+        stableFrameCountRef.current = 0;
+        return;
+      }
+      // Don't auto-scan if there's already a job scanning
+      if (useScanStore.getState().jobs.some(j => j.status === 'scanning')) {
+        stableFrameCountRef.current = 0;
+        return;
+      }
+
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return;
+
+      const cardW = Math.floor(vw * 0.60);
+      const cardH = Math.floor(cardW * (3.5 / 2.5));
+      const cardX = Math.floor((vw - cardW) / 2);
+      const cardY = Math.floor((vh - cardH) / 2);
+
+      // Small canvas just for detection (downscale for speed)
+      const canvas = document.createElement('canvas');
+      const scale = 0.15;
+      canvas.width = Math.floor(cardW * scale);
+      canvas.height = Math.floor(cardH * scale);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, canvas.width, canvas.height);
+
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imgData.data;
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Check edge contrast: compare pixels along the border vs slightly inside.
+      // Cards have clear edges (bright card area vs dark background).
+      let edgeSum = 0;
+      let innerSum = 0;
+      let edgeCount = 0;
+      let innerCount = 0;
+      const margin = 2; // pixels from border
+      const inner = 6;  // pixels inside for comparison
+
+      for (let x = 0; x < w; x++) {
+        // Top edge
+        const topEdgeIdx = (margin * w + x) * 4;
+        const topInnerIdx = (inner * w + x) * 4;
+        edgeSum += data[topEdgeIdx]; edgeCount++;
+        innerSum += data[topInnerIdx]; innerCount++;
+        // Bottom edge
+        const botEdgeIdx = ((h - 1 - margin) * w + x) * 4;
+        const botInnerIdx = ((h - 1 - inner) * w + x) * 4;
+        edgeSum += data[botEdgeIdx]; edgeCount++;
+        innerSum += data[botInnerIdx]; innerCount++;
+      }
+      for (let y = 0; y < h; y++) {
+        // Left edge
+        const leftEdgeIdx = (y * w + margin) * 4;
+        const leftInnerIdx = (y * w + inner) * 4;
+        edgeSum += data[leftEdgeIdx]; edgeCount++;
+        innerSum += data[leftInnerIdx]; innerCount++;
+        // Right edge
+        const rightEdgeIdx = (y * w + (w - 1 - margin)) * 4;
+        const rightInnerIdx = (y * w + (w - 1 - inner)) * 4;
+        edgeSum += data[rightEdgeIdx]; edgeCount++;
+        innerSum += data[rightInnerIdx]; innerCount++;
+      }
+
+      const edgeAvg = edgeSum / edgeCount;
+      const innerAvg = innerSum / innerCount;
+      const contrast = Math.abs(innerAvg - edgeAvg);
+
+      // Also check that the center isn't too dark/uniform (an actual card has detail)
+      let variance = 0;
+      const centerStartX = Math.floor(w * 0.25);
+      const centerEndX = Math.floor(w * 0.75);
+      const centerStartY = Math.floor(h * 0.25);
+      const centerEndY = Math.floor(h * 0.75);
+      let centerSum = 0;
+      let centerCount2 = 0;
+      for (let y = centerStartY; y < centerEndY; y += 2) {
+        for (let x = centerStartX; x < centerEndX; x += 2) {
+          centerSum += data[(y * w + x) * 4];
+          centerCount2++;
+        }
+      }
+      const centerMean = centerSum / centerCount2;
+      for (let y = centerStartY; y < centerEndY; y += 2) {
+        for (let x = centerStartX; x < centerEndX; x += 2) {
+          const diff = data[(y * w + x) * 4] - centerMean;
+          variance += diff * diff;
+        }
+      }
+      variance /= centerCount2;
+
+      // Card detected: decent edge contrast AND center has texture/detail
+      const hasCard = contrast > 15 && variance > 400;
+
+      if (hasCard) {
+        stableFrameCountRef.current++;
+        // 3 consecutive detections (~1.8s) → auto-scan
+        if (stableFrameCountRef.current >= 3) {
+          stableFrameCountRef.current = 0;
+          captureInlineFrame();
+        }
+      } else {
+        stableFrameCountRef.current = 0;
+      }
+    };
+
+    autoScanTimerRef.current = setInterval(checkForCard, 600);
+    return () => {
+      if (autoScanTimerRef.current) {
+        clearInterval(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
+    };
+  }, [isMobile, autoScanEnabled, captureInlineFrame]);
 
   const loadFiles = useCallback((files: FileList | File[]) => {
     Array.from(files).forEach(file => {
@@ -676,11 +826,24 @@ export function CardScanner() {
                   )}
                 </AnimatePresence>
 
+                {/* Auto-scan toggle */}
+                <button
+                  onClick={() => setAutoScanEnabled(v => !v)}
+                  className={`absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-sm text-[10px] font-bold transition-colors ${
+                    autoScanEnabled
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-black/50 text-gray-500 border border-white/10'
+                  }`}
+                >
+                  <Scan size={10} />
+                  Auto
+                </button>
+
                 {/* Capture button */}
                 <div className="absolute bottom-4 inset-x-0 flex justify-center">
                   <motion.button
                     whileTap={{ scale: 0.85 }}
-                    onClick={captureInlineFrame}
+                    onPointerDown={captureInlineFrame}
                     className="w-16 h-16 rounded-full flex items-center justify-center"
                     style={{
                       background: 'linear-gradient(135deg, #F59E0B, #d97706)',
