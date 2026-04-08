@@ -10,6 +10,7 @@ import { Wishlist } from './pages/Wishlist';
 import { Search } from './pages/Search';
 import { Scan } from './pages/Scan';
 import { ResetPassword } from './pages/ResetPassword';
+import { Settings } from './pages/Settings';
 import { AuthProvider } from './lib/auth';
 import { AuthSync } from './components/AuthSync';
 
@@ -43,6 +44,7 @@ function AppRoutes() {
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="/search" element={<Search />} />
           <Route path="/scan" element={<Scan />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/reset-password" element={<ResetPassword />} />
         </Routes>
       </motion.main>

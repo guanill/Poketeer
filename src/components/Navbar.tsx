@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, Layers, BookOpen, Heart, Search, ScanLine, LogIn, LogOut, User } from 'lucide-react';
+import { LayoutDashboard, Layers, BookOpen, Heart, Search, ScanLine, Settings, LogIn, LogOut, User } from 'lucide-react';
 import { useCollectionStore } from '../store/collectionStore';
 import { useAuth } from '../lib/auth';
 
@@ -70,6 +70,7 @@ const navItems = [
   { to: '/wishlist', icon: Heart, label: 'Wishlist' },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/scan', icon: ScanLine, label: 'Scan' },
+  { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 function UserMenu() {

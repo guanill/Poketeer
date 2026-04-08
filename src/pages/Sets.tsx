@@ -8,6 +8,7 @@ import type { PokemonSet } from '../types';
 import { SetCard } from '../components/SetCard';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { useCollectionStore } from '../store/collectionStore';
+import { useSettingsStore } from '../store/settingsStore';
 
 // Stable empty array so SetCard memo doesn't see a new reference each render
 const EMPTY: string[] = [];
@@ -24,8 +25,11 @@ const VALID_LANGS = new Set<Lang>(['en', 'ja', 'th']);
 
 export function Sets() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const enabledLangs = useSettingsStore(s => s.enabledLangs);
+  const availableLangs = (Object.keys(LANG_LABELS) as Lang[]).filter(l => enabledLangs[l]);
   const initialLang = (searchParams.get('lang') as Lang) ?? 'en';
-  const [lang, setLang] = useState<Lang>(VALID_LANGS.has(initialLang) ? initialLang : 'en');
+  const defaultLang = availableLangs.includes(initialLang) ? initialLang : availableLangs[0];
+  const [lang, setLang] = useState<Lang>(defaultLang);
   const [search, setSearch] = useState('');
   const [seriesFilter, setSeriesFilter] = useState('All');
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'progress'>('date');
@@ -58,9 +62,18 @@ export function Sets() {
     select: selectForLang,
   });
 
+  // If the current language gets disabled in settings, switch to the first enabled one
   useEffect(() => {
-    // Prefetch the other two languages in the background so switching is instant
-    (['en', 'ja', 'th'] as Lang[]).filter(l => l !== lang).forEach(l => {
+    if (!enabledLangs[lang]) {
+      const first = (Object.keys(LANG_LABELS) as Lang[]).find(l => enabledLangs[l]) ?? 'en';
+      handleLangChange(first);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabledLangs]);
+
+  useEffect(() => {
+    // Prefetch the other enabled languages in the background so switching is instant
+    (['en', 'ja', 'th'] as Lang[]).filter(l => l !== lang && enabledLangs[l]).forEach(l => {
       queryClient.prefetchQuery({
         queryKey: ['sets', 'v2', l],
         queryFn: () => pokemonTCGService.getSets(l),
@@ -167,27 +180,29 @@ export function Sets() {
           </p>
         </div>
 
-        {/* Language switcher */}
-        <div
-          className="flex gap-1 p-1 rounded-2xl"
-          style={{
-            background: 'linear-gradient(145deg, #13132a, #0f0f22)',
-            border: '1px solid rgba(139,92,246,0.15)',
-          }}
-        >
-          {(Object.keys(LANG_LABELS) as Lang[]).map(l => (
-            <motion.button
-              key={l}
-              whileTap={{ scale: 0.96 }}
-              onClick={() => handleLangChange(l)}
-              className={`lang-tab ${lang === l ? 'lang-tab-active' : ''}`}
-            >
-              <Globe size={13} />
-              <span>{LANG_LABELS[l].flag}</span>
-              {LANG_LABELS[l].label}
-            </motion.button>
-          ))}
-        </div>
+        {/* Language switcher — hidden when only one language is enabled */}
+        {availableLangs.length > 1 && (
+          <div
+            className="flex gap-1 p-1 rounded-2xl"
+            style={{
+              background: 'linear-gradient(145deg, #13132a, #0f0f22)',
+              border: '1px solid rgba(139,92,246,0.15)',
+            }}
+          >
+            {availableLangs.map(l => (
+              <motion.button
+                key={l}
+                whileTap={{ scale: 0.96 }}
+                onClick={() => handleLangChange(l)}
+                className={`lang-tab ${lang === l ? 'lang-tab-active' : ''}`}
+              >
+                <Globe size={13} />
+                <span>{LANG_LABELS[l].flag}</span>
+                {LANG_LABELS[l].label}
+              </motion.button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="gradient-divider" />
