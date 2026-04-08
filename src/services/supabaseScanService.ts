@@ -551,6 +551,26 @@ async function searchByNumber(
     }
   }
 
+  // Strategy 1.5: No name but we have HP — use number + HP as a strong filter
+  if (nameVariants.length === 0 && hpHint) {
+    const { data, error } = await supabase
+      .from('cards')
+      .select('*, sets!inner(id, name, series, language)')
+      .in('number', exact)
+      .eq('hp', hpHint)
+      .eq('sets.language', langFilter)
+      .limit(topK);
+
+    if (!error && data && data.length > 0) {
+      const results = rowsToMatches(data);
+      for (const r of results) r.confidence = 0.94; // number + HP match
+      applySetHint(results, setHint);
+      applySupertypeHint(results, supertypeHint);
+      results.sort((a, b) => b.confidence - a.confidence);
+      return results.slice(0, topK);
+    }
+  }
+
   // Strategy 2 + 3: Fetch exact and nearby numbers in PARALLEL, rank by name.
   const exactPromise = (async () => {
     const { data, error } = await supabase
@@ -609,7 +629,7 @@ async function searchByNumber(
 
   const results = [...merged.values()];
   applySetHint(results, setHint);
-  applyHpHint(results, hpHint);
+  applyHpHint(results, hpHint, nameVariants.length > 0);
   applySupertypeHint(results, supertypeHint);
   results.sort((a, b) => b.confidence - a.confidence);
   return results.slice(0, topK);
@@ -646,15 +666,17 @@ function applySetHint(results: ScanMatch[], setHint: string): void {
   }
 }
 
-/** Boost/penalize results based on HP match. */
-function applyHpHint(results: ScanMatch[], hpHint: string): void {
+/** Boost/penalize results based on HP match. Stronger when no name hint. */
+function applyHpHint(results: ScanMatch[], hpHint: string, hasName: boolean): void {
   if (!hpHint) return;
+  // When there's no name, HP is one of the few signals — make it count
+  const boost = hasName ? 0.05 : 0.12;
+  const penalty = hasName ? 0.92 : 0.65;
   for (const r of results) {
     if (r.hp === hpHint) {
-      r.confidence = Math.min(0.99, r.confidence + 0.05);
+      r.confidence = Math.min(0.99, r.confidence + boost);
     } else if (r.hp && r.hp !== hpHint) {
-      // Different HP — small penalty (HP might be misread by OCR)
-      r.confidence = Math.max(0.10, r.confidence * 0.92);
+      r.confidence = Math.max(0.10, r.confidence * penalty);
     }
     // No HP on card (Trainer/Energy) — no change
   }
