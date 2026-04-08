@@ -21,7 +21,6 @@ const LANG_LABELS: Record<Lang, { flag: string; label: string }> = {
   th: { flag: '🇹🇭', label: 'Thai' },
 };
 
-const VALID_LANGS = new Set<Lang>(['en', 'ja', 'th']);
 
 export function Sets() {
   const [searchParams, setSearchParams] = useSearchParams();
