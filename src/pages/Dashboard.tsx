@@ -21,11 +21,27 @@ export function Dashboard() {
 
   const cardIds = Object.keys(owned);
 
-  const { data: sets, isLoading } = useQuery({
+  // Fetch all languages so the dashboard reflects the full collection
+  const { data: setsEn } = useQuery({
     queryKey: ['sets', 'v2', 'en'],
     queryFn: () => pokemonTCGService.getSets('en'),
     staleTime: 1000 * 60 * 60,
   });
+  const { data: setsJa } = useQuery({
+    queryKey: ['sets', 'v2', 'ja'],
+    queryFn: () => pokemonTCGService.getSets('ja'),
+    staleTime: 1000 * 60 * 60,
+  });
+  const { data: setsTh } = useQuery({
+    queryKey: ['sets', 'v2', 'th'],
+    queryFn: () => pokemonTCGService.getSets('th'),
+    staleTime: 1000 * 60 * 60,
+  });
+  const sets = useMemo(() => {
+    const all = [...(setsEn ?? []), ...(setsJa ?? []), ...(setsTh ?? [])];
+    return all.length > 0 ? all : undefined;
+  }, [setsEn, setsJa, setsTh]);
+  const isLoading = !setsEn && !setsJa && !setsTh;
 
   // Prices for portfolio value
   const { data: prices = {} } = useQuery({
@@ -43,31 +59,67 @@ export function Dashboard() {
     staleTime: 1000 * 60 * 10,
   });
 
-  // Compute set progress
-  const setProgress = useMemo(() => {
-    if (!sets) return [];
-    const ownedBySet: Record<string, number> = {};
+  // Owned cards grouped by set ID
+  const ownedBySet = useMemo(() => {
+    const map: Record<string, number> = {};
     Object.keys(owned).forEach(cardId => {
-      const parts = cardId.split('-');
-      const setId = parts.length >= 2 ? parts.slice(0, parts.length - 1).join('-') : parts[0];
-      ownedBySet[setId] = (ownedBySet[setId] ?? 0) + 1;
+      const langSuffix = cardId.endsWith('-ja') ? '-ja' : cardId.endsWith('-th') ? '-th' : '';
+      let setId: string;
+      if (langSuffix) {
+        const withoutLang = cardId.slice(0, -langSuffix.length);
+        const parts = withoutLang.split('-');
+        setId = parts.slice(0, parts.length - 1).join('-') + langSuffix;
+      } else {
+        const parts = cardId.split('-');
+        setId = parts.length >= 2 ? parts.slice(0, parts.length - 1).join('-') : parts[0];
+      }
+      map[setId] = (map[setId] ?? 0) + 1;
     });
+    return map;
+  }, [owned]);
 
-    return sets
-      .filter(s => ownedBySet[s.id] > 0)
-      .map(s => ({
-        set: s,
-        owned: ownedBySet[s.id] ?? 0,
-        progress: Math.round(((ownedBySet[s.id] ?? 0) / s.total) * 100),
-      }))
-      .sort((a, b) => b.progress - a.progress)
-      .slice(0, 5);
-  }, [sets, owned]);
+  // Set progress grouped by language
+  type LangKey = 'en' | 'ja' | 'th';
+  const LANG_CFG: Record<LangKey, { flag: string; label: string }> = {
+    en: { flag: '\uD83C\uDDEC\uD83C\uDDE7', label: 'English' },
+    ja: { flag: '\uD83C\uDDEF\uD83C\uDDF5', label: 'Japanese' },
+    th: { flag: '\uD83C\uDDF9\uD83C\uDDED', label: 'Thai' },
+  };
+
+  const setProgressByLang = useMemo(() => {
+    const langSets: Record<LangKey, typeof setsEn> = { en: setsEn, ja: setsJa, th: setsTh };
+    const result: { lang: LangKey; total: number; started: number; items: { set: NonNullable<typeof setsEn>[number]; owned: number; progress: number }[] }[] = [];
+
+    for (const lang of ['en', 'ja', 'th'] as LangKey[]) {
+      const s = langSets[lang];
+      if (!s || s.length === 0) continue;
+      const started = s.filter(set => (ownedBySet[set.id] ?? 0) > 0).length;
+      const items = s
+        .filter(set => (ownedBySet[set.id] ?? 0) > 0)
+        .map(set => ({
+          set,
+          owned: ownedBySet[set.id] ?? 0,
+          progress: Math.round(((ownedBySet[set.id] ?? 0) / set.total) * 100),
+        }))
+        .sort((a, b) => b.progress - a.progress)
+        .slice(0, 3);
+      result.push({ lang, total: s.length, started, items });
+    }
+    return result;
+  }, [setsEn, setsJa, setsTh, ownedBySet]);
+
+  const completeSetsCount = useMemo(() => {
+    if (!sets) return 0;
+    return sets.filter(s => {
+      const count = ownedBySet[s.id] ?? 0;
+      return count > 0 && count >= s.total;
+    }).length;
+  }, [sets, ownedBySet]);
 
   const totalSpent = getTotalSpent();
   const totalCards = getTotalCards();
   const uniqueCards = getUniqueCards();
-  const completeSets = setProgress.filter(s => s.progress === 100).length;
+  const completeSets = completeSetsCount;
 
   // Portfolio value
   const marketValue = useMemo(() => {
@@ -201,7 +253,7 @@ export function Dashboard() {
               <p className="text-sm text-gray-400 font-semibold">
                 {uniqueCards === 0
                   ? 'Browse sets and add your first card!'
-                  : `Tracking ${uniqueCards} unique cards across ${sets?.length ?? 0} sets`}
+                  : `Tracking ${uniqueCards} unique cards`}
               </p>
             </div>
           </div>
@@ -353,7 +405,7 @@ export function Dashboard() {
         </motion.div>
       )}
 
-      {/* Set Progress */}
+      {/* Set Progress — grouped by language */}
       <motion.div variants={itemVariants}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -367,7 +419,7 @@ export function Dashboard() {
 
         {isLoading ? (
           <LoadingSkeleton count={3} type="set" />
-        ) : setProgress.length === 0 ? (
+        ) : setProgressByLang.every(g => g.items.length === 0) ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -388,75 +440,99 @@ export function Dashboard() {
             </Link>
           </motion.div>
         ) : (
-          <div className="space-y-3">
-            {setProgress.map(({ set, owned: ownedCount, progress }, i) => (
-              <motion.div
-                key={set.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.1 }}
-                whileHover={{ x: 4 }}
-              >
-                <Link to={`/sets/${set.id}`}>
-                  <div
-                    className="p-4 rounded-2xl flex items-center gap-4 cursor-pointer transition-all hover:bg-white/4"
-                    style={{
-                      background: 'linear-gradient(145deg, #1c1c38, #12122a)',
-                      border: progress === 100 ? '1px solid rgba(255,203,5,0.25)' : '1px solid rgba(255,255,255,0.05)',
-                    }}
-                  >
-                    <div className="shrink-0 w-20 h-10 flex items-center justify-center">
-                      {set.images.logo ? (
-                        <img
-                          src={set.images.logo}
-                          alt={set.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="w-full h-full object-contain"
-                          onError={(e) => {
-                            const img = e.target as HTMLImageElement;
-                            if (set.images.symbol) {
-                              img.src = set.images.symbol;
-                              img.className = 'w-8 h-8 object-contain';
-                            } else {
-                              img.style.display = 'none';
-                            }
-                          }}
-                        />
-                      ) : set.images.symbol ? (
-                        <img src={set.images.symbol} alt={set.name} className="w-8 h-8 object-contain" />
-                      ) : null}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-sm font-bold text-white truncate">{set.name}</p>
-                        <span className="text-xs text-gray-500 shrink-0 ml-2 font-bold">
-                          {ownedCount}/{set.total}
-                        </span>
-                      </div>
-                      <div className="hp-bar-track">
-                        <motion.div
-                          className={`hp-bar-fill ${
-                            progress === 100 ? 'hp-bar-full'
-                            : progress >= 75  ? 'hp-bar-high'
-                            : progress >= 40  ? 'hp-bar-mid'
-                            : progress > 0    ? 'hp-bar-low'
-                            : 'hp-bar-empty'
-                          }`}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${progress}%` }}
-                          transition={{ duration: 1, delay: 0.2 + i * 0.1 }}
-                        />
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-xs font-black" style={{ color: progress === 100 ? '#F59E0B' : '#6b7280' }}>
-                      {progress}%
-                    </div>
-                    {progress === 100 && <span className="text-yellow-400 text-sm animate-pulse">✨</span>}
-                    <ChevronRight size={14} className="text-gray-600" />
+          <div className="space-y-5">
+            {setProgressByLang.map(({ lang, total, started, items }) => (
+              <div key={lang} className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{LANG_CFG[lang].flag}</span>
+                    <span className="text-xs font-bold text-gray-300">{LANG_CFG[lang].label}</span>
+                    <span className="text-[10px] text-gray-600 font-bold">{started} / {total} sets</span>
                   </div>
-                </Link>
-              </motion.div>
+                  <Link
+                    to={lang === 'en' ? '/sets' : `/sets?lang=${lang}`}
+                    className="text-[10px] text-gray-600 hover:text-amber-400 transition-colors"
+                  >
+                    View all
+                  </Link>
+                </div>
+
+                {items.length === 0 ? (
+                  <p className="text-[11px] text-gray-700 pl-7">No sets started</p>
+                ) : (
+                  <div className="space-y-2">
+                    {items.map(({ set, owned: ownedCount, progress }, i) => (
+                      <motion.div
+                        key={set.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.08 }}
+                        whileHover={{ x: 4 }}
+                      >
+                        <Link to={`/sets/${set.id}${lang !== 'en' ? `?lang=${lang}` : ''}`}>
+                          <div
+                            className="p-3 rounded-xl flex items-center gap-3 cursor-pointer transition-all hover:bg-white/4"
+                            style={{
+                              background: 'linear-gradient(145deg, #1c1c38, #12122a)',
+                              border: progress === 100 ? '1px solid rgba(255,203,5,0.25)' : '1px solid rgba(255,255,255,0.05)',
+                            }}
+                          >
+                            <div className="shrink-0 w-16 h-8 flex items-center justify-center">
+                              {set.images.logo ? (
+                                <img
+                                  src={set.images.logo}
+                                  alt={set.name}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="w-full h-full object-contain"
+                                  onError={(e) => {
+                                    const img = e.target as HTMLImageElement;
+                                    if (set.images.symbol) {
+                                      img.src = set.images.symbol;
+                                      img.className = 'w-6 h-6 object-contain';
+                                    } else {
+                                      img.style.display = 'none';
+                                    }
+                                  }}
+                                />
+                              ) : set.images.symbol ? (
+                                <img src={set.images.symbol} alt={set.name} className="w-6 h-6 object-contain" />
+                              ) : null}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-xs font-bold text-white truncate">{set.name}</p>
+                                <span className="text-[10px] text-gray-500 shrink-0 ml-2 font-bold">
+                                  {ownedCount}/{set.total}
+                                </span>
+                              </div>
+                              <div className="hp-bar-track">
+                                <motion.div
+                                  className={`hp-bar-fill ${
+                                    progress === 100 ? 'hp-bar-full'
+                                    : progress >= 75  ? 'hp-bar-high'
+                                    : progress >= 40  ? 'hp-bar-mid'
+                                    : progress > 0    ? 'hp-bar-low'
+                                    : 'hp-bar-empty'
+                                  }`}
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${progress}%` }}
+                                  transition={{ duration: 1, delay: 0.2 + i * 0.08 }}
+                                />
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-[10px] font-black" style={{ color: progress === 100 ? '#F59E0B' : '#6b7280' }}>
+                              {progress}%
+                            </div>
+                            {progress === 100 && <span className="text-yellow-400 text-xs animate-pulse">✨</span>}
+                            <ChevronRight size={12} className="text-gray-600" />
+                          </div>
+                        </Link>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
