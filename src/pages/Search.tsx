@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Search as SearchIcon, X, Sparkles, Loader2, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
@@ -128,6 +128,7 @@ export function Search() {
   })();
 
   return (
+    <LayoutGroup>
     <div className="space-y-6">
       {/* Header */}
       <div>
@@ -306,5 +307,6 @@ export function Search() {
 
       <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
     </div>
+    </LayoutGroup>
   );
 }

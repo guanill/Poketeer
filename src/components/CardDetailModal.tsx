@@ -39,7 +39,6 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
 
   if (!card) return null;
 
-  // Use passed-in price first, then embedded tcgplayer data, then stored custom price
   const marketPrice = marketPriceProp ?? getCardMarketPrice(card) ?? customPrices[card.id] ?? null;
 
   const handleSaveManualPrice = () => {
@@ -68,20 +67,27 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
 
   return (
     <AnimatePresence>
+      {/* Backdrop */}
       <motion.div
+        key="backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        transition={{ duration: 0.25 }}
+        className="fixed inset-0 z-50"
         style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)' }}
         onClick={onClose}
-      >
+      />
+
+      {/* Modal content */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
         <motion.div
-          initial={{ opacity: 0, scale: 0.85, y: 40 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.85, y: 40 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-          className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl"
+          key="modal"
+          initial={{ opacity: 0, y: 60 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 40 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 28, delay: 0.05 }}
+          className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl pointer-events-auto"
           style={{
             background: 'linear-gradient(145deg, #1a1a2e, #0f0f2a)',
             border: `1px solid ${rarityColor}40`,
@@ -97,27 +103,25 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
           </button>
 
           <div className="p-5">
-            {/* Top section — stacks on mobile, side-by-side on desktop */}
+            {/* Top section */}
             <div className="flex flex-col sm:flex-row gap-5">
-              {/* Card Image */}
+              {/* Card Image — layoutId connects to the grid thumbnail */}
               <div className="shrink-0 flex justify-center sm:block">
-                <motion.div
-                  whileHover={{ scale: 1.05, rotateY: 5 }}
-                  transition={{ type: 'spring', stiffness: 200 }}
-                  className="relative"
-                >
+                <motion.div className="relative">
                   {(card.images.large || card.images.small) ? (
-                    <img
+                    <motion.img
+                      layoutId={`card-img-${card.id}`}
                       src={card.images.large || card.images.small}
                       alt={card.name}
-                      className="w-36 sm:w-40 rounded-xl shadow-2xl"
+                      className="w-36 sm:w-44 rounded-xl"
                       style={{ boxShadow: `0 20px 40px ${rarityColor}40` }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 28 }}
                     />
                   ) : (
                     <div
-                      className="w-36 sm:w-40 rounded-xl flex flex-col items-center justify-center gap-2"
+                      className="w-36 sm:w-44 rounded-xl flex flex-col items-center justify-center gap-2"
                       style={{
-                        height: '220px',
+                        height: '240px',
                         background: 'linear-gradient(145deg, #1a1a3e, #0f0f2a)',
                         border: `1px solid ${rarityColor}40`,
                         boxShadow: `0 20px 40px ${rarityColor}20`,
@@ -131,6 +135,7 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                     <motion.div
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
+                      transition={{ delay: 0.2, type: 'spring', stiffness: 400 }}
                       className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-yellow-400 flex items-center justify-center shadow-lg"
                     >
                       <Star size={14} className="text-black" fill="currentColor" />
@@ -139,8 +144,13 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                 </motion.div>
               </div>
 
-              {/* Card Info */}
-              <div className="flex-1 min-w-0">
+              {/* Card Info — slides in from right */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.12, duration: 0.35 }}
+                className="flex-1 min-w-0"
+              >
                 <div>
                   <h2 className="text-xl font-black text-white leading-tight">{card.name}</h2>
                   {card.name_en && (
@@ -179,7 +189,13 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                 )}
 
                 {/* Market Price */}
-                <div className="mt-3 p-3 rounded-xl border border-white/8" style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))' }}>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="mt-3 p-3 rounded-xl border border-white/8"
+                  style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))' }}
+                >
                   {marketPrice ? (
                     <div className="flex items-center justify-between">
                       <div>
@@ -228,18 +244,19 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                       ))}
                     </div>
                   )}
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
             </div>
 
-            {/* Collection Actions */}
-            <div className="mt-5 pt-4 border-t border-white/5">
+            {/* Collection Actions — slides up */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              className="mt-5 pt-4 border-t border-white/5"
+            >
               {isOwned ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="space-y-3"
-                >
+                <div className="space-y-3">
                   <div className="p-3 rounded-xl bg-yellow-400/10 border border-yellow-400/20 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -268,7 +285,7 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                       </div>
                     </div>
 
-                    {/* Variant toggles — only show variants this card actually comes in */}
+                    {/* Variant toggles */}
                     {(() => {
                       const available = getAvailableVariants(card);
                       return available.length > 1 || (available.length === 1 && available[0] !== 'normal') ? (
@@ -299,7 +316,7 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                       ) : null;
                     })()}
                   </div>
-                </motion.div>
+                </div>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm font-semibold text-white">Add to Collection</p>
@@ -373,10 +390,10 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                   View on TCGPlayer
                 </a>
               )}
-            </div>
+            </motion.div>
           </div>
         </motion.div>
-      </motion.div>
+      </div>
     </AnimatePresence>
   );
 }

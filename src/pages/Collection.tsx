@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame, Repeat } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
@@ -145,6 +145,7 @@ export function Collection() {
     : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4';
 
   return (
+    <LayoutGroup>
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -374,5 +375,6 @@ export function Collection() {
         marketPrice={selectedCard ? getPrice(selectedCard.id) : null}
       />
     </div>
+    </LayoutGroup>
   );
 }

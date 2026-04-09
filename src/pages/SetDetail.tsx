@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Grid, LayoutList, ChevronLeft, ChevronRight, ArrowUpDown, Flame } from 'lucide-react';
@@ -150,6 +150,7 @@ export function SetDetail() {
   };
 
   return (
+    <LayoutGroup>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
@@ -365,5 +366,6 @@ export function SetDetail() {
         marketPrice={selectedCard && selectedCardPrices ? (selectedCardPrices[selectedCard.id] ?? null) : null}
       />
     </div>
+    </LayoutGroup>
   );
 }

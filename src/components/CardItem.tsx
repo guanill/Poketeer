@@ -122,6 +122,7 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
           )}
           {hasImage ? (
             <motion.img
+              layoutId={`card-img-${card.id}`}
               src={card.images.small}
               alt={card.name}
               className={`w-full h-full object-contain rounded-lg transition-opacity ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}

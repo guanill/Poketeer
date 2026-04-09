@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Heart, Trash2, DollarSign, Grid, LayoutList, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService, getCardMarketPrice } from '../services/pokemonTCG';
@@ -147,6 +147,7 @@ export function Wishlist() {
     : '';
 
   return (
+    <LayoutGroup>
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -419,5 +420,6 @@ export function Wishlist() {
 
       <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
     </div>
+    </LayoutGroup>
   );
 }
