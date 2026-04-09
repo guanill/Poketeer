@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame } from 'lucide-react';
+import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame, Repeat } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import { useCollectionStore } from '../store/collectionStore';
 import { CardItem } from '../components/CardItem';
@@ -10,12 +10,14 @@ import { RARITY_ORDER, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard } from '../types';
 
 type SortOption = 'date' | 'name-asc' | 'name-desc' | 'set' | 'rarity-desc' | 'rarity-asc' | 'price-desc' | 'price-asc';
+type ViewTab = 'collection' | 'trades';
 
 export function Collection() {
   const [selectedCard, setSelectedCard] = useState<PokemonCard | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('date');
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [gridSize, setGridSize] = useState<'small' | 'large'>('small');
+  const [viewTab, setViewTab] = useState<ViewTab>('collection');
 
   const owned = useCollectionStore(s => s.owned);
   const customPrices = useCollectionStore(s => s.customPrices);
@@ -73,6 +75,20 @@ export function Collection() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards, sortBy, owned, prices, typeFilter]);
+
+  // Tradeable cards: duplicates (quantity > 1)
+  const tradeableCards = useMemo(() => {
+    if (!cards) return [];
+    return cards
+      .filter(c => (owned[c.id]?.quantity ?? 0) > 1)
+      .sort((a, b) => (owned[b.id]?.quantity ?? 0) - (owned[a.id]?.quantity ?? 0));
+  }, [cards, owned]);
+
+  const totalTradeExtras = useMemo(() => {
+    return tradeableCards.reduce((sum, c) => sum + (owned[c.id]?.quantity ?? 0) - 1, 0);
+  }, [tradeableCards, owned]);
+
+  const displayCards = viewTab === 'trades' ? tradeableCards : sortedCards;
 
   // Group by set when sorting by set
   const groupedBySet = useMemo(() => {
@@ -147,6 +163,45 @@ export function Collection() {
       </div>
 
       <div className="gradient-divider" />
+
+      {/* View tabs */}
+      <div
+        className="flex gap-1 p-1 rounded-2xl w-fit"
+        style={{
+          background: 'linear-gradient(145deg, #13132a, #0f0f22)',
+          border: '1px solid rgba(139,92,246,0.15)',
+        }}
+      >
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          onClick={() => setViewTab('collection')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            viewTab === 'collection'
+              ? 'bg-amber-400/15 text-amber-400 shadow-sm'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <BookOpen size={13} />
+          All Cards
+        </motion.button>
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          onClick={() => setViewTab('trades')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            viewTab === 'trades'
+              ? 'bg-violet-400/15 text-violet-400 shadow-sm'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <Repeat size={13} />
+          Tradeable
+          {tradeableCards.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-violet-500/20 text-violet-400">
+              {tradeableCards.length}
+            </span>
+          )}
+        </motion.button>
+      </div>
 
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -226,6 +281,34 @@ export function Collection() {
         </div>
       )}
 
+      {/* Trades info banner */}
+      {viewTab === 'trades' && !isLoading && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-3.5 rounded-xl border"
+          style={{
+            background: 'linear-gradient(135deg, rgba(139,92,246,0.06), rgba(139,92,246,0.02))',
+            border: '1px solid rgba(139,92,246,0.15)',
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            <Repeat size={16} className="text-violet-400 shrink-0" />
+            <div>
+              <p className="text-xs font-bold text-white">
+                {tradeableCards.length} card{tradeableCards.length !== 1 ? 's' : ''} with extras
+                <span className="text-gray-500 font-normal ml-1.5">
+                  ({totalTradeExtras} extra{totalTradeExtras !== 1 ? 's' : ''} available to trade)
+                </span>
+              </p>
+              <p className="text-[10px] text-gray-600 mt-0.5">
+                Cards you own more than one copy of — extras can be traded
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Cards */}
       {isLoading ? (
         <div className={gridClass}>
@@ -233,7 +316,7 @@ export function Collection() {
             <div key={i} className="aspect-[2.5/3.5] rounded-2xl bg-white/5 shimmer" />
           ))}
         </div>
-      ) : groupedBySet ? (
+      ) : groupedBySet && viewTab === 'collection' ? (
         // Grouped by set view
         <div className="space-y-6">
           {groupedBySet.map(group => (
@@ -259,25 +342,29 @@ export function Collection() {
         // Flat grid view
         <AnimatePresence mode="popLayout">
           <motion.div
-            key={`${sortBy}-${typeFilter}`}
+            key={`${sortBy}-${typeFilter}-${viewTab}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className={gridClass}
           >
-            {sortedCards.map(card => (
+            {displayCards.map(card => (
               <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
             ))}
           </motion.div>
         </AnimatePresence>
       )}
 
-      {sortedCards.length === 0 && !isLoading && (
+      {displayCards.length === 0 && !isLoading && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           className="text-center py-16"
         >
-          <p className="text-gray-400 text-sm">No cards match this filter</p>
+          <p className="text-gray-400 text-sm">
+            {viewTab === 'trades'
+              ? 'No duplicates yet — add more than one copy of a card to see it here'
+              : 'No cards match this filter'}
+          </p>
         </motion.div>
       )}
 

@@ -32,8 +32,10 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
   // 3D tilt effect
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const rotateX = useSpring(useTransform(y, [-0.5, 0.5], [8, -8]), { stiffness: 300, damping: 30 });
-  const rotateY = useSpring(useTransform(x, [-0.5, 0.5], [-8, 8]), { stiffness: 300, damping: 30 });
+  const rotateX = useSpring(useTransform(y, [-0.5, 0.5], [12, -12]), { stiffness: 300, damping: 30 });
+  const rotateY = useSpring(useTransform(x, [-0.5, 0.5], [-12, 12]), { stiffness: 300, damping: 30 });
+  // Holographic shine position (follows mouse)
+  const [shine, setShine] = useState({ x: 50, y: 50, active: false });
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cardRef.current) return;
@@ -42,11 +44,13 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
     const ny = (e.clientY - rect.top) / rect.height - 0.5;
     x.set(nx);
     y.set(ny);
+    setShine({ x: (nx + 0.5) * 100, y: (ny + 0.5) * 100, active: true });
   };
 
   const handleMouseLeave = () => {
     x.set(0);
     y.set(0);
+    setShine({ x: 50, y: 50, active: false });
   };
 
   const marketPrice = getCardMarketPrice(card);
@@ -79,12 +83,22 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
           : 'ring-1 ring-white/6'
       }`}
     >
-      {/* Holographic overlay */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-10">
+      {/* Holographic rainbow shine — follows mouse cursor */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-10 rounded-2xl">
         <div
-          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+          className="absolute inset-0 transition-opacity duration-300"
           style={{
-            background: `linear-gradient(135deg, transparent 30%, ${rarityColor}15 50%, transparent 70%)`,
+            opacity: shine.active ? 0.7 : 0,
+            background: `radial-gradient(circle at ${shine.x}% ${shine.y}%, rgba(255,255,255,0.25) 0%, transparent 50%)`,
+            mixBlendMode: 'overlay',
+          }}
+        />
+        <div
+          className="absolute inset-0 transition-opacity duration-300"
+          style={{
+            opacity: shine.active ? 0.45 : 0,
+            background: `linear-gradient(${115 + (shine.x - 50) * 1.5}deg, transparent 20%, rgba(255,50,50,0.12) 30%, rgba(255,200,50,0.12) 40%, rgba(50,255,50,0.12) 50%, rgba(50,150,255,0.12) 60%, rgba(180,50,255,0.12) 70%, transparent 80%)`,
+            filter: 'blur(1px)',
           }}
         />
       </div>
