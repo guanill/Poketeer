@@ -7,6 +7,7 @@ import {
 import type { ScanMatch } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
 import { preloadWorker, warmupHfSpace } from '../services/supabaseScanService';
+import { visualMatchService } from '../services/visualMatchService';
 import { catalogService } from '../services/catalogService';
 import { useCollectionStore } from '../store/collectionStore';
 import { useScanStore } from '../store/scanStore';
@@ -415,8 +416,13 @@ export function CardScanner() {
     ('ontouchstart' in window || window.innerWidth < 640)
   );
 
-  // Preload Tesseract worker and wake HF Space so first scan is fast
-  useEffect(() => { preloadWorker('en'); warmupHfSpace(); }, []);
+  // Preload Tesseract worker, wake HF Space, and load the on-device visual
+  // matching model (MobileNet + card index) so the first scan is fast.
+  useEffect(() => {
+    preloadWorker('en');
+    warmupHfSpace();
+    void visualMatchService.init();
+  }, []);
 
   useEffect(() => {
     cardScanService.checkHealth().then(setBackendOk);

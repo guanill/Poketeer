@@ -2,17 +2,19 @@
  * Supabase-backed card scanning.
  *
  * Pipeline:
- *   1. Send image to PaddleOCR HF Space → get card name, number, set code
- *   2. Fallback: client-side Tesseract.js multi-pass OCR
- *   3. Search by number first (most accurate), then fuzzy name search
- *   4. Optional: if cloud embedding model is up, boost/merge with visual matches
+ *   1. In parallel, run PaddleOCR (HF Space) and on-device visual matching
+ *      (ONNX MobileNet against the bundled 20k-card feature index).
+ *   2. OCR extracts card number + name → narrow DB search to a few candidates.
+ *   3. Visual match re-ranks those candidates by image similarity so holofoils,
+ *      glare, and OCR misreads are resolved by "what does the card look like".
+ *   4. Fall back to Tesseract client-side OCR if PaddleOCR is unreachable.
  */
 
 import { supabase } from '../lib/supabase';
 import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
+import { visualMatchService } from './visualMatchService';
 
-// HF Space URLs
-const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
+// HF Space URL — OCR only. Visual embedding is now fully on-device.
 const HF_OCR_URL = 'https://agm3000-poketeer-card-ocr.hf.space';
 
 // ── PaddleOCR via HF Space ──────────────────────────────────────────────────
@@ -741,86 +743,77 @@ async function searchByName(
   }));
 }
 
-// ── Optional visual embedding boost ──────────────────────────────────────────
+// ── Visual confirmation via on-device ONNX model ────────────────────────────
+//
+// The bundled `card_model.onnx` (MobileNetV3-Small, 576-D) and quantized
+// `card_index_mobile.bin` cover ~20k EN cards. Matching runs entirely in the
+// browser via onnxruntime-web — no network round-trip. For JA/TH cards we
+// skip visual match because the index is EN-only, and OCR does the work.
 
 async function tryVisualMatch(
   imageFile: File | Blob,
   topK: number,
   lang: ScanLanguage,
 ): Promise<ScanMatch[]> {
+  // Visual index only contains EN cards — skip for JA/TH scans.
+  if (lang !== 'en') return [];
+
   try {
-    const formData = new FormData();
-    formData.append('file', imageFile);
+    // Ensure the model + index are loaded. This is idempotent and will just
+    // await the in-flight init if another caller (Scanner mount) kicked it off.
+    const ready = await visualMatchService.init();
+    if (!ready) return [];
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    const res = await fetch(`${HF_SPACE_URL}/embed`, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    if (!res.ok) return [];
-    const { embedding } = await res.json();
-    if (!embedding) return [];
-
-    const embeddingStr = '[' + embedding.join(',') + ']';
-    const { data, error } = await supabase.rpc('match_card', {
-      query_embedding: embeddingStr,
-      match_count: topK * 3,
-    });
-
-    if (error || !data) return [];
-
-    const allMatches: ScanMatch[] = data.map((row) => ({
-      id: row.id,
-      name: row.name,
-      number: row.number,
-      set_id: row.set_id,
-      set_name: '',
-      rarity: row.rarity,
-      image_small: row.image_small,
-      image_large: row.image_large,
-      supertype: row.supertype,
-      subtypes: row.subtypes,
-      hp: row.hp,
-      artist: row.artist ?? '',
-      confidence: Math.max(0, Math.min(0.99, row.similarity)),
-      method: 'visual' as const,
-    }));
-
-    if (lang === 'en') {
-      return allMatches.filter(m => !m.set_id.endsWith('-ja') && !m.set_id.endsWith('-th'));
-    }
-    return allMatches.filter(m => m.set_id.endsWith(`-${lang}`));
-  } catch {
+    // Over-fetch so the merge step has a larger candidate pool to re-rank.
+    return await visualMatchService.matchCard(imageFile, topK * 3);
+  } catch (err) {
+    console.warn('[scan] visual match failed:', err);
     return [];
   }
 }
 
-/** Merge OCR and visual results — if both agree on a card, boost confidence. */
+/**
+ * Merge OCR and visual results.
+ *
+ * Visual is treated purely as a **confirmation / re-ranking** signal:
+ *  - If OCR found candidates AND visual agrees on one of them → big confidence
+ *    boost so the correct card jumps to the top.
+ *  - If OCR found candidates but visual disagrees → trust OCR (numbers are
+ *    authoritative) and leave ranking alone.
+ *  - If OCR found nothing → fall back to visual-only, but only accept
+ *    high-confidence matches (photos with glare generate noisy embeddings).
+ */
 function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK: number): ScanMatch[] {
-  const merged = new Map<string, ScanMatch>();
+  // Build O(1) visual-score lookup
+  const visualScore = new Map<string, number>();
+  for (const v of visualMatches) visualScore.set(v.id, v.confidence);
 
-  for (const m of ocrMatches) {
-    merged.set(m.id, { ...m });
+  // No OCR at all — fall back to visual-only, but filter noise.
+  if (ocrMatches.length === 0) {
+    return visualMatches
+      .filter(m => m.confidence >= 0.55)
+      .slice(0, topK);
   }
 
-  for (const m of visualMatches) {
-    const existing = merged.get(m.id);
-    if (existing) {
-      existing.confidence = Math.min(0.99, existing.confidence + m.confidence * 0.3);
-      existing.method = 'ocr+visual';
-    } else {
-      merged.set(m.id, { ...m });
+  // OCR candidates re-ranked by visual similarity when visual agrees.
+  const boosted = ocrMatches.map(m => {
+    const vScore = visualScore.get(m.id);
+    if (vScore !== undefined && vScore > 0.3) {
+      // Visual confirmed — strong boost proportional to visual confidence.
+      // A 0.8 visual similarity pushes an OCR match from e.g. 0.6 → ~0.95.
+      return {
+        ...m,
+        confidence: Math.min(0.99, m.confidence + vScore * 0.5),
+        method: 'ocr+visual' as const,
+      };
     }
-  }
+    return m;
+  });
 
-  return [...merged.values()]
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, topK);
+  // Re-sort so a boosted lower-ranked OCR candidate can overtake the original
+  // top pick (this is the whole point of using visual as a tiebreaker).
+  boosted.sort((a, b) => b.confidence - a.confidence);
+  return boosted.slice(0, topK);
 }
 
 // ── Main scan ────────────────────────────────────────────────────────────────
@@ -846,6 +839,13 @@ export async function supabaseScan(
   let ocrText = '';
   let usedPaddle = false;
   let effectiveLang = lang;  // May be overridden by auto-detection
+
+  // Kick off on-device visual matching in parallel with the OCR round-trip.
+  // It's independent of OCR and runs locally, so there's no reason to wait.
+  // We assume EN for the visual call (it's the only language in the index);
+  // if OCR later detects JA/TH, we discard the visual results anyway.
+  const visualPromise = tryVisualMatch(imageFile, topK, 'en')
+    .catch(() => [] as ScanMatch[]);
 
   const paddleResult = await tryPaddleOcr(imageFile, 'auto');
 
@@ -888,9 +888,6 @@ export async function supabaseScan(
       console.log('[scan] all text:', paddleResult.all_text.map(t => `${t.region}: "${t.text}" (${t.confidence})`).join(', '));
     }
   }
-
-  // 1. Start visual matching (after we know the effective language)
-  const visualPromise = tryVisualMatch(imageFile, topK, effectiveLang).catch(() => [] as ScanMatch[]);
 
   // 3. Fallback: client-side Tesseract.js if PaddleOCR failed
   if (!usedPaddle) {
@@ -986,8 +983,11 @@ export async function supabaseScan(
     } catch { /* ignore */ }
   }
 
-  // 4. Await visual results and merge
-  const visualMatches = await visualPromise;
+  // 4. Await visual results and merge.
+  // The visual index is EN-only; if OCR auto-detected JA/TH, drop the visual
+  // candidates (they'd point at unrelated EN cards) and trust OCR alone.
+  const rawVisualMatches = await visualPromise;
+  const visualMatches = effectiveLang === 'en' ? rawVisualMatches : [];
 
   const matches = visualMatches.length > 0
     ? mergeResults(ocrMatches, visualMatches, topK)
