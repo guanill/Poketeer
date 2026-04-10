@@ -67,25 +67,25 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
 
   return (
     <AnimatePresence>
-      {/* Backdrop */}
+      {/* Backdrop — exits instantly so the returning card image stays visible */}
       <motion.div
         key="backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+        exit={{ opacity: 0, transition: { duration: 0.05 } }}
         transition={{ duration: 0.25 }}
-        className="fixed inset-0 z-50"
+        className="fixed inset-0 z-40"
         style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)' }}
         onClick={onClose}
       />
 
-      {/* Modal content */}
+      {/* Modal content — above backdrop so layoutId image flies over it */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
         <motion.div
           key="modal"
           initial={{ opacity: 0, y: 60 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 40 }}
+          exit={{ opacity: 0, y: 20, transition: { duration: 0.15 } }}
           transition={{ type: 'spring', stiffness: 260, damping: 28, delay: 0.05 }}
           className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl pointer-events-auto"
           style={{
