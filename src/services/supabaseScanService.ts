@@ -753,11 +753,7 @@ async function searchByName(
 async function tryVisualMatch(
   imageFile: File | Blob,
   topK: number,
-  lang: ScanLanguage,
 ): Promise<ScanMatch[]> {
-  // Visual index only contains EN cards — skip for JA/TH scans.
-  if (lang !== 'en') return [];
-
   try {
     // Ensure the model + index are loaded. This is idempotent and will just
     // await the in-flight init if another caller (Scanner mount) kicked it off.
@@ -765,6 +761,8 @@ async function tryVisualMatch(
     if (!ready) return [];
 
     // Over-fetch so the merge step has a larger candidate pool to re-rank.
+    // The index covers EN and TH cards; the mergeResults step picks the right
+    // language by intersecting with OCR candidates.
     return await visualMatchService.matchCard(imageFile, topK * 3);
   } catch (err) {
     console.warn('[scan] visual match failed:', err);
@@ -842,9 +840,8 @@ export async function supabaseScan(
 
   // Kick off on-device visual matching in parallel with the OCR round-trip.
   // It's independent of OCR and runs locally, so there's no reason to wait.
-  // We assume EN for the visual call (it's the only language in the index);
-  // if OCR later detects JA/TH, we discard the visual results anyway.
-  const visualPromise = tryVisualMatch(imageFile, topK, 'en')
+  // The visual index contains both EN and TH cards; JA is still OCR-only.
+  const visualPromise = tryVisualMatch(imageFile, topK)
     .catch(() => [] as ScanMatch[]);
 
   const paddleResult = await tryPaddleOcr(imageFile, 'auto');
@@ -984,10 +981,12 @@ export async function supabaseScan(
   }
 
   // 4. Await visual results and merge.
-  // The visual index is EN-only; if OCR auto-detected JA/TH, drop the visual
-  // candidates (they'd point at unrelated EN cards) and trust OCR alone.
+  // The index covers EN + TH cards. For JA scans the visual matches will
+  // always be non-JA cards, so mergeResults' intersection-with-OCR logic
+  // will naturally ignore them unless OCR also found the same card (which
+  // it won't, since JA OCR candidates have `-ja` set IDs).
   const rawVisualMatches = await visualPromise;
-  const visualMatches = effectiveLang === 'en' ? rawVisualMatches : [];
+  const visualMatches = effectiveLang === 'ja' ? [] : rawVisualMatches;
 
   const matches = visualMatches.length > 0
     ? mergeResults(ocrMatches, visualMatches, topK)
