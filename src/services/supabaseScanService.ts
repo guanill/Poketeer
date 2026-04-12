@@ -787,14 +787,9 @@ function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK:
   for (const v of visualMatches) visualScore.set(v.id, v.confidence);
 
   // No OCR at all — fall back to visual-only, but filter noise.
-  // Threshold is kept low (0.3) because the MobileNet model is a generic
-  // ImageNet extractor — cosine similarity between a real photo and a clean
-  // digital scan often lands in the 0.3–0.6 range.  The user will still see
-  // multiple candidates and pick the right one; false positives are filtered
-  // by the UI.
   if (ocrMatches.length === 0) {
     return visualMatches
-      .filter(m => m.confidence >= 0.3)
+      .filter(m => m.confidence >= 0.55)
       .slice(0, topK);
   }
 
