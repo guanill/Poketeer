@@ -1,27 +1,30 @@
 """
-Append Thai cards to the existing on-device visual match index.
+Rebuild the on-device visual match index from scratch with EN + TH cards.
 
-The current index (`public/card_index_mobile.bin` + `card_index_meta.json`)
-covers ~20k English cards from pokemontcg.io. This script:
+The previously-shipped `public/card_index_mobile.bin` was 512-D but the
+`public/card_model.onnx` feature extractor outputs 576-D. Those dimensions
+don't match, so `visualMatchService.init()` fails its dim check on every
+load and silently disables visual matching. This script fixes that by
+re-embedding every card (EN from `card_index_meta.json`, TH from
+`backend/th_cards_2024_2025.json`) using MobileNetV3-Small and writing a
+fresh 576-D quantized index.
 
-  1. Loads the existing quantized EN index and dequantizes it back to floats.
-  2. Loads Thai cards from `backend/th_cards_2024_2025.json`.
-  3. Skips any Thai cards already present (safe to re-run).
-  4. Downloads + embeds each Thai card image with MobileNetV3-Small (576-D),
-     the same feature extractor used for the EN index.
-  5. Concatenates EN + TH features, re-quantizes per-dimension to uint8,
-     and writes a new combined `card_index_mobile.bin` + `card_index_meta.json`.
+Source metadata:
+  - EN: `public/card_index_meta.json`       (20,026 cards)
+  - TH: `backend/th_cards_2024_2025.json`   (3,143 cards)
 
-Notes on the dequant→requant round-trip: per-dim uint8 quantization loses
-roughly one part in ~256, which is well below the noise floor of a photo
-scan. Cosine-similarity match quality is unaffected in practice.
+Outputs (overwritten):
+  - `public/card_index_mobile.bin`
+  - `public/card_index_meta.json`
 
-Usage (from the project root, with torch + torchvision + requests installed):
+Images are cached in `backend/_image_cache/` so re-runs after network
+failures don't re-download successful cards.
 
+Usage (from project root):
     python -m backend.scripts.add_thai_to_index
 
-Expected runtime: ~10-20 minutes depending on network for the 3,143 image
-downloads. Images are cached in `backend/_image_cache/`, so re-runs are fast.
+Expected runtime: 30-90 minutes on a cold cache (limited by card image
+downloads from images.pokemontcg.io and asia.pokemon-card.com).
 """
 
 from __future__ import annotations
@@ -60,10 +63,11 @@ INPUT_SIZE = 224
 BATCH_SIZE = 32
 
 # ---------------------------------------------------------------------------
-# Feature extractor — must match backend/training/export_mobile_onnx.py
+# Feature extractor — must match what card_model.onnx in public/ produces
 # ---------------------------------------------------------------------------
 
 class MobileFeatureExtractor(nn.Module):
+    """MobileNetV3-Small as L2-normalised feature extractor (576-D)."""
     def __init__(self):
         super().__init__()
         weights = models.MobileNet_V3_Small_Weights.DEFAULT
@@ -86,48 +90,19 @@ TRANSFORM = T.Compose([
 ])
 
 # ---------------------------------------------------------------------------
-# Load existing index (dequantized) + metadata
+# Source metadata loaders
 # ---------------------------------------------------------------------------
 
-def load_existing_index() -> tuple[np.ndarray, list[dict]]:
-    if not INDEX_BIN.exists() or not INDEX_META.exists():
-        raise FileNotFoundError(
-            f"Expected {INDEX_BIN} and {INDEX_META}. Run export_mobile_onnx first."
-        )
+EN_META_FIELDS = (
+    "id", "name", "number", "set_id", "set_name", "rarity",
+    "image_small", "image_large", "supertype", "subtypes", "hp", "artist",
+)
 
-    with open(INDEX_BIN, "rb") as f:
-        n_cards, dim = struct.unpack("<II", f.read(8))
-        mins = np.frombuffer(f.read(dim * 4), dtype=np.float32)
-        maxs = np.frombuffer(f.read(dim * 4), dtype=np.float32)
-        quantized = np.frombuffer(f.read(n_cards * dim), dtype=np.uint8)
 
-    if dim != FEATURE_DIM:
-        raise ValueError(f"Index dim {dim} != expected {FEATURE_DIM}")
-
-    quantized = quantized.reshape(n_cards, dim).astype(np.float32)
-    ranges = (maxs - mins).copy()
-    ranges[ranges == 0] = 1.0
-    features = mins + (quantized / 255.0) * ranges  # (N, dim)
-
-    with open(INDEX_META, encoding="utf-8") as f:
-        metadata = json.load(f)
-
-    if len(metadata) != n_cards:
-        raise ValueError(
-            f"Meta length {len(metadata)} != index cards {n_cards}"
-        )
-
-    print(f"[existing] {n_cards} cards loaded, {dim}-D features")
-    return features, metadata
-
-# ---------------------------------------------------------------------------
-# Thai card loading
-# ---------------------------------------------------------------------------
-
-def normalize_thai_card(card: dict) -> dict:
-    """Shape a Thai card entry to match the EN metadata schema."""
+def normalize_card(card: dict) -> dict:
+    """Shape a card entry to the metadata schema visualMatchService expects."""
     return {
-        "id": card["id"],
+        "id": card.get("id", ""),
         "name": card.get("name", ""),
         "number": card.get("number", ""),
         "set_id": card.get("set_id", ""),
@@ -136,20 +111,30 @@ def normalize_thai_card(card: dict) -> dict:
         "image_small": card.get("image_small", ""),
         "image_large": card.get("image_large", card.get("image_small", "")),
         "supertype": card.get("supertype", ""),
-        "subtypes": card.get("subtypes", []),
+        "subtypes": card.get("subtypes", []) or [],
         "hp": card.get("hp", ""),
         "artist": card.get("artist", ""),
     }
 
 
-def load_thai_cards(existing_ids: set[str]) -> list[dict]:
+def load_en_cards() -> list[dict]:
+    if not INDEX_META.exists():
+        raise FileNotFoundError(f"Missing {INDEX_META}")
+    with open(INDEX_META, encoding="utf-8") as f:
+        raw = json.load(f)
+    cards = [normalize_card(c) for c in raw]
+    print(f"[en] {len(cards)} cards loaded from {INDEX_META.name}")
+    return cards
+
+
+def load_th_cards() -> list[dict]:
     if not TH_CARDS_JSON.exists():
         raise FileNotFoundError(f"Missing {TH_CARDS_JSON}")
     with open(TH_CARDS_JSON, encoding="utf-8") as f:
         raw = json.load(f)
-    new = [normalize_thai_card(c) for c in raw if c["id"] not in existing_ids]
-    print(f"[thai] {len(raw)} total, {len(new)} new (not already indexed)")
-    return new
+    cards = [normalize_card(c) for c in raw]
+    print(f"[th] {len(cards)} cards loaded from {TH_CARDS_JSON.name}")
+    return cards
 
 # ---------------------------------------------------------------------------
 # Image download (cached) + batched embedding
@@ -170,24 +155,25 @@ def load_image(url: str) -> Image.Image | None:
         resp.raise_for_status()
         cache_path.write_bytes(resp.content)
         return Image.open(io.BytesIO(resp.content)).convert("RGB")
-    except Exception as err:
-        print(f"  ! failed {url}: {err}")
+    except Exception:
         return None
 
 
-def embed_cards(cards: list[dict], model: MobileFeatureExtractor) -> tuple[np.ndarray, list[dict]]:
+def embed_cards(cards: list[dict], model: MobileFeatureExtractor,
+                label: str) -> tuple[np.ndarray, list[dict]]:
     n = len(cards)
     features = np.zeros((n, FEATURE_DIM), dtype=np.float32)
     valid_mask = np.zeros(n, dtype=bool)
 
+    print(f"[{label}] embedding {n} cards...")
     start = time.time()
     failed = 0
 
     for batch_start in range(0, n, BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, n)
         batch = cards[batch_start:batch_end]
-        tensors = []
-        idxs = []
+        tensors: list[torch.Tensor] = []
+        idxs: list[int] = []
 
         for j, card in enumerate(batch):
             img = load_image(card.get("image_small", ""))
@@ -197,33 +183,32 @@ def embed_cards(cards: list[dict], model: MobileFeatureExtractor) -> tuple[np.nd
             tensors.append(TRANSFORM(img))
             idxs.append(batch_start + j)
 
-        if not tensors:
-            continue
-
-        batch_tensor = torch.stack(tensors)
-        with torch.no_grad():
-            emb = model(batch_tensor).numpy()
-
-        for local_i, global_i in enumerate(idxs):
-            features[global_i] = emb[local_i]
-            valid_mask[global_i] = True
+        if tensors:
+            batch_tensor = torch.stack(tensors)
+            with torch.no_grad():
+                emb = model(batch_tensor).numpy()
+            for local_i, global_i in enumerate(idxs):
+                features[global_i] = emb[local_i]
+                valid_mask[global_i] = True
 
         done = batch_end
         elapsed = time.time() - start
         rate = done / elapsed if elapsed > 0 else 0
         eta = (n - done) / rate if rate > 0 else 0
-        print(f"  {done}/{n} embedded ({failed} failed, {rate:.1f}/s, ETA {eta:.0f}s)")
+        if done % (BATCH_SIZE * 5) == 0 or done == n:
+            print(f"  [{label}] {done}/{n} "
+                  f"({failed} failed, {rate:.1f}/s, ETA {eta:.0f}s)")
 
     kept_features = features[valid_mask]
     kept_cards = [c for c, keep in zip(cards, valid_mask) if keep]
-    print(f"[thai] {len(kept_cards)} cards successfully embedded ({failed} failed)")
+    print(f"[{label}] {len(kept_cards)} embedded, {failed} failed")
     return kept_features, kept_cards
 
 # ---------------------------------------------------------------------------
 # Quantize + write
 # ---------------------------------------------------------------------------
 
-def write_combined_index(features: np.ndarray, metadata: list[dict]) -> None:
+def write_index(features: np.ndarray, metadata: list[dict]) -> None:
     n_cards, dim = features.shape
     mins = features.min(axis=0).astype(np.float32)
     maxs = features.max(axis=0).astype(np.float32)
@@ -242,7 +227,8 @@ def write_combined_index(features: np.ndarray, metadata: list[dict]) -> None:
 
     bin_mb = INDEX_BIN.stat().st_size / 1e6
     meta_mb = INDEX_META.stat().st_size / 1e6
-    print(f"[write] {INDEX_BIN.name} ({bin_mb:.1f} MB), {INDEX_META.name} ({meta_mb:.1f} MB)")
+    print(f"[write] {INDEX_BIN.name} ({bin_mb:.1f} MB), "
+          f"{INDEX_META.name} ({meta_mb:.1f} MB)")
 
 # ---------------------------------------------------------------------------
 # Main
@@ -250,33 +236,37 @@ def write_combined_index(features: np.ndarray, metadata: list[dict]) -> None:
 
 def main():
     print("=" * 60)
-    print("Appending Thai cards to visual match index")
+    print("Rebuilding visual match index (EN + TH, 576-D)")
     print("=" * 60)
 
-    en_features, en_meta = load_existing_index()
-    existing_ids = {c["id"] for c in en_meta}
+    en_cards = load_en_cards()
+    th_cards = load_th_cards()
 
-    th_cards = load_thai_cards(existing_ids)
-    if not th_cards:
-        print("Nothing to do — all Thai cards already indexed.")
-        return
+    # De-duplicate in case an EN-meta entry collides with a TH id (shouldn't)
+    en_ids = {c["id"] for c in en_cards}
+    th_cards = [c for c in th_cards if c["id"] not in en_ids]
 
-    print("Loading MobileNetV3-Small...")
+    print("Loading MobileNetV3-Small (ImageNet weights)...")
     model = MobileFeatureExtractor()
     model.eval()
 
-    th_features, th_meta = embed_cards(th_cards, model)
-    if len(th_meta) == 0:
-        print("No Thai cards embedded successfully. Aborting.")
+    en_features, en_meta = embed_cards(en_cards, model, "en")
+    th_features, th_meta = embed_cards(th_cards, model, "th")
+
+    if len(en_meta) == 0 and len(th_meta) == 0:
+        print("No cards embedded. Aborting.")
         return
 
-    combined_features = np.concatenate([en_features, th_features], axis=0)
+    combined_features = np.concatenate(
+        [f for f in (en_features, th_features) if len(f) > 0], axis=0,
+    )
     combined_meta = en_meta + th_meta
 
     print(f"[combined] {len(combined_meta)} cards total "
-          f"(EN: {len(en_meta)}, TH: {len(th_meta)})")
+          f"(EN: {len(en_meta)}, TH: {len(th_meta)}), "
+          f"{combined_features.shape[1]}-D")
 
-    write_combined_index(combined_features, combined_meta)
+    write_index(combined_features, combined_meta)
     print("Done. Rebuild the web bundle to pick up the new index.")
 
 
