@@ -54,6 +54,7 @@ export interface CardsResponse {
 function rowToSet(row: {
   id: string;
   name: string;
+  name_en?: string;
   series: string;
   printed_total: number;
   total: number;
@@ -65,6 +66,7 @@ function rowToSet(row: {
   return {
     id: row.id,
     name: row.name,
+    name_en: row.name_en || undefined,
     series: row.series,
     printedTotal: row.printed_total,
     total: row.total,

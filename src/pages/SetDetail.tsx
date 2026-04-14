@@ -178,6 +178,9 @@ export function SetDetail() {
             )}
             <div>
               <h1 className="text-2xl font-black text-white">{set?.name ?? 'Loading...'}</h1>
+              {set?.name_en && set.name_en !== set.name && (
+                <p className="text-sm text-gray-400 leading-tight">{set.name_en}</p>
+              )}
               <p className="text-sm text-gray-500">{set?.series} · {set?.releaseDate}</p>
             </div>
           </div>

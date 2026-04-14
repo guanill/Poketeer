@@ -1,6 +1,7 @@
 export interface PokemonSet {
   id: string;
   name: string;
+  name_en?: string;
   series: string;
   printedTotal: number;
   total: number;

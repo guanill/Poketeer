@@ -30,10 +30,9 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
   const isIntlLogo = isIntl && !!set.images.logo;
   const isEnLogo = !isIntl && !!set.images.logo;
 
-  // Split "Thai name (English name)" into two lines for intl sets
-  const enMatch = isIntl ? set.name.match(/^(.+?)\s*\(([^)]+)\)\s*$/) : null;
-  const localName = enMatch ? enMatch[1] : set.name;
-  const enName = enMatch ? enMatch[2] : null;
+  // For intl sets show Japanese/Thai name + English name below
+  const localName = set.name;
+  const enName = isIntl ? (set.name_en || null) : null;
   // Cap stagger so cards beyond the 20th don't wait 4+ seconds to animate in
   const delay = Math.min(index, 20) * 0.04;
 
