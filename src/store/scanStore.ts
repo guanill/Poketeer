@@ -17,8 +17,11 @@ interface ScanStore {
   jobs: ScanJob[];
   scanLang: ScanLanguage;
   jobSeq: number;
+  isOpen: boolean;
 
   setScanLang: (lang: ScanLanguage) => void;
+  openScanner: () => void;
+  closeScanner: () => void;
   nextJobId: (prefix: string) => string;
   addJob: (job: ScanJob) => void;
   updateJob: (id: string, patch: Partial<ScanJob>) => void;
@@ -31,8 +34,12 @@ export const useScanStore = create<ScanStore>((set, get) => ({
   jobs: [],
   scanLang: 'en',
   jobSeq: 0,
+  isOpen: false,
 
   setScanLang: (lang) => set({ scanLang: lang }),
+
+  openScanner: () => set({ isOpen: true }),
+  closeScanner: () => set({ isOpen: false }),
 
   nextJobId: (prefix) => {
     const seq = get().jobSeq + 1;

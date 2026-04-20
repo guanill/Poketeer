@@ -21,27 +21,23 @@ export function Dashboard() {
 
   const cardIds = Object.keys(owned);
 
-  // Fetch all languages so the dashboard reflects the full collection
-  const { data: setsEn } = useQuery({
-    queryKey: ['sets', 'v2', 'en'],
-    queryFn: () => pokemonTCGService.getSets('en'),
+  // Single query for all languages
+  const { data: sets, isLoading } = useQuery({
+    queryKey: ['sets', 'v2', 'all'],
+    queryFn: () => pokemonTCGService.getAllSets(),
     staleTime: 1000 * 60 * 60,
   });
-  const { data: setsJa } = useQuery({
-    queryKey: ['sets', 'v2', 'ja'],
-    queryFn: () => pokemonTCGService.getSets('ja'),
-    staleTime: 1000 * 60 * 60,
-  });
-  const { data: setsTh } = useQuery({
-    queryKey: ['sets', 'v2', 'th'],
-    queryFn: () => pokemonTCGService.getSets('th'),
-    staleTime: 1000 * 60 * 60,
-  });
-  const sets = useMemo(() => {
-    const all = [...(setsEn ?? []), ...(setsJa ?? []), ...(setsTh ?? [])];
-    return all.length > 0 ? all : undefined;
-  }, [setsEn, setsJa, setsTh]);
-  const isLoading = !setsEn && !setsJa && !setsTh;
+
+  const setsByLang = useMemo(() => {
+    const groups: Record<'en' | 'ja' | 'th', NonNullable<typeof sets>> = { en: [], ja: [], th: [] };
+    (sets ?? []).forEach(s => {
+      const id = s.id;
+      const lang: 'en' | 'ja' | 'th' =
+        id.endsWith('-ja') ? 'ja' : id.endsWith('-th') ? 'th' : 'en';
+      groups[lang].push(s);
+    });
+    return groups;
+  }, [sets]);
 
   // Prices for portfolio value
   const { data: prices = {} } = useQuery({
@@ -87,11 +83,11 @@ export function Dashboard() {
   };
 
   const setProgressByLang = useMemo(() => {
-    const langSets: Record<LangKey, typeof setsEn> = { en: setsEn, ja: setsJa, th: setsTh };
-    const result: { lang: LangKey; total: number; started: number; items: { set: NonNullable<typeof setsEn>[number]; owned: number; progress: number }[] }[] = [];
+    type SetEntry = NonNullable<typeof sets>[number];
+    const result: { lang: LangKey; total: number; started: number; items: { set: SetEntry; owned: number; progress: number }[] }[] = [];
 
     for (const lang of ['en', 'ja', 'th'] as LangKey[]) {
-      const s = langSets[lang];
+      const s = setsByLang[lang];
       if (!s || s.length === 0) continue;
       const started = s.filter(set => (ownedBySet[set.id] ?? 0) > 0).length;
       const items = s
@@ -106,7 +102,7 @@ export function Dashboard() {
       result.push({ lang, total: s.length, started, items });
     }
     return result;
-  }, [setsEn, setsJa, setsTh, ownedBySet]);
+  }, [setsByLang, ownedBySet]);
 
   const completeSetsCount = useMemo(() => {
     if (!sets) return 0;

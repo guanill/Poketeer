@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink } from 'lucide-react';
+import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check } from 'lucide-react';
 import type { PokemonCard, CardCondition, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
 import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
@@ -25,6 +25,8 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
   const [condition, setCondition] = useState<CardCondition>('Near Mint');
   const [notes, setNotes] = useState('');
   const [manualPriceInput, setManualPriceInput] = useState('');
+  const [addQty, setAddQty] = useState(1);
+  const [addedFlash, setAddedFlash] = useState(0);
 
   const owned = useCollectionStore(s => card ? s.owned[card.id] : undefined);
   const inWishlist = useCollectionStore(s => card ? s.isInWishlist(card.id) : false);
@@ -62,7 +64,14 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
     : [];
 
   const handleAddToCollection = () => {
-    addCard(card.id, pricePaid ? parseFloat(pricePaid) : marketPrice ?? undefined, condition, notes || undefined);
+    const qty = Math.max(1, addQty);
+    const price = pricePaid ? parseFloat(pricePaid) : marketPrice ?? undefined;
+    addCard(card.id, price, condition, notes || undefined);
+    if (qty > 1) {
+      updateCard(card.id, { quantity: qty });
+    }
+    setAddedFlash(qty);
+    setTimeout(() => { onClose(); setAddedFlash(0); }, 650);
   };
 
   return (
@@ -349,18 +358,56 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                     onChange={(e) => setNotes(e.target.value)}
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-yellow-400/50"
                   />
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleAddToCollection}
-                    className="w-full py-2.5 rounded-xl font-bold text-sm text-black transition-all"
-                    style={{ background: 'linear-gradient(135deg, #F59E0B, #d97706)' }}
-                  >
-                    <div className="flex items-center justify-center gap-2">
-                      <Package size={16} />
-                      Add to Collection
+                  <div className="flex items-stretch gap-2">
+                    <div
+                      className="flex items-center gap-1 rounded-xl px-1.5 border border-white/10 bg-white/5"
+                      aria-label="Quantity to add"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setAddQty(q => Math.max(1, q - 1))}
+                        disabled={addQty <= 1 || addedFlash > 0}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <span className="min-w-[2ch] text-center text-sm font-black text-white tabular-nums">{addQty}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAddQty(q => Math.min(99, q + 1))}
+                        disabled={addQty >= 99 || addedFlash > 0}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      >
+                        <Plus size={14} />
+                      </button>
                     </div>
-                  </motion.button>
+                    <motion.button
+                      whileHover={addedFlash > 0 ? undefined : { scale: 1.02 }}
+                      whileTap={addedFlash > 0 ? undefined : { scale: 0.98 }}
+                      onClick={handleAddToCollection}
+                      disabled={addedFlash > 0}
+                      className="flex-1 py-2.5 rounded-xl font-bold text-sm text-black transition-all disabled:opacity-90"
+                      style={{
+                        background: addedFlash > 0
+                          ? 'linear-gradient(135deg, #10b981, #059669)'
+                          : 'linear-gradient(135deg, #F59E0B, #d97706)',
+                      }}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        {addedFlash > 0 ? (
+                          <>
+                            <Check size={16} />
+                            Added {addedFlash > 1 ? `${addedFlash}×` : ''}
+                          </>
+                        ) : (
+                          <>
+                            <Package size={16} />
+                            Add {addQty > 1 ? `${addQty}×` : ''} to Collection
+                          </>
+                        )}
+                      </div>
+                    </motion.button>
+                  </div>
                 </div>
               )}
 

@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LayoutDashboard, Layers, BookOpen, Heart, Search, ScanLine, Settings, LogIn, LogOut, User } from 'lucide-react';
 import { useCollectionStore } from '../store/collectionStore';
+import { useScanStore } from '../store/scanStore';
 import { useAuth } from '../lib/auth';
 
 function CardIcon({ size = 20 }: { size?: number }) {
@@ -69,9 +70,12 @@ const navItems = [
   { to: '/collection', icon: BookOpen, label: 'Collection' },
   { to: '/wishlist', icon: Heart, label: 'Wishlist' },
   { to: '/search', icon: Search, label: 'Search' },
-  { to: '/scan', icon: ScanLine, label: 'Scan' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
+
+// Mobile bottom bar splits around the central FAB
+const mobileLeft  = navItems.slice(0, 3); // Dashboard, Sets, Collection
+const mobileRight = navItems.slice(3);    // Wishlist, Search, Settings
 
 function UserMenu() {
   const { user, signInWithGoogle, signInWithEmail, signUp, signOut, resetPassword, loading } = useAuth();
@@ -335,6 +339,7 @@ function UserMenu() {
 export function Navbar() {
   const uniqueCards = useCollectionStore(s => s.getUniqueCards());
   const wishlistCount = useCollectionStore(s => s.wishlist.length);
+  const openScanner = useScanStore(s => s.openScanner);
 
   return (
     <>
@@ -394,6 +399,21 @@ export function Navbar() {
 
         {/* Right side: stats + auth */}
         <div className="flex items-center gap-2">
+          {/* Desktop Scan button */}
+          <motion.button
+            whileHover={{ scale: 1.06, y: -1 }}
+            whileTap={{ scale: 0.94 }}
+            onClick={openScanner}
+            className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-black transition-shadow"
+            style={{
+              background: 'linear-gradient(135deg, #F59E0B, #d97706)',
+              color: '#1a0a00',
+              boxShadow: '0 0 0 1px rgba(245,158,11,0.4), 0 4px 16px rgba(245,158,11,0.35)',
+            }}
+          >
+            <ScanLine size={14} strokeWidth={2.6} />
+            Scan
+          </motion.button>
           {/* Desktop Stats Pills */}
           <div className="hidden md:flex items-center gap-2">
             <motion.div
@@ -439,15 +459,75 @@ export function Navbar() {
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <div className="flex items-stretch h-14">
-        {navItems.map(({ to, icon: Icon, label }) => (
+      <div className="relative flex items-stretch h-14">
+        {mobileLeft.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to} end={to === '/'} className="flex-1">
             {({ isActive }) => (
               <motion.div
                 whileTap={{ scale: 0.82 }}
                 className="relative flex flex-col items-center justify-center h-full gap-0.5"
               >
-                {/* Active top line */}
+                {isActive && (
+                  <motion.div
+                    layoutId="bottom-tab-line"
+                    className="absolute top-0 inset-x-2 h-0.5 rounded-full"
+                    style={{ background: 'linear-gradient(90deg, #8B5CF6, #F59E0B)' }}
+                  />
+                )}
+                <div style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(139,92,246,0.8))' } : undefined}>
+                  <Icon
+                    size={22}
+                    style={{ color: isActive ? '#a78bfa' : '#6b7280' }}
+                    strokeWidth={isActive ? 2.2 : 1.8}
+                  />
+                </div>
+                <span
+                  className="text-[9px] font-bold tracking-wide"
+                  style={{ color: isActive ? '#a78bfa' : '#6b7280' }}
+                >
+                  {label}
+                </span>
+              </motion.div>
+            )}
+          </NavLink>
+        ))}
+
+        {/* Center FAB slot — keeps bar spacing symmetrical */}
+        <div className="flex-1 flex items-start justify-center pointer-events-none">
+          <motion.button
+            whileTap={{ scale: 0.88 }}
+            whileHover={{ scale: 1.05 }}
+            onClick={openScanner}
+            className="pointer-events-auto relative flex items-center justify-center rounded-full"
+            style={{
+              width: 58,
+              height: 58,
+              marginTop: -22,
+              background: 'linear-gradient(135deg, #F59E0B 0%, #d97706 55%, #8B5CF6 100%)',
+              boxShadow:
+                '0 0 0 4px #07070f, 0 0 0 5px rgba(245,158,11,0.45), 0 8px 24px rgba(245,158,11,0.5), inset 0 2px 0 rgba(255,255,255,0.25)',
+            }}
+            aria-label="Scan card"
+          >
+            {/* Pulse ring */}
+            <motion.span
+              aria-hidden
+              className="absolute inset-0 rounded-full"
+              style={{ border: '2px solid rgba(245,158,11,0.5)' }}
+              animate={{ scale: [1, 1.25], opacity: [0.6, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
+            />
+            <ScanLine size={24} strokeWidth={2.6} color="#1a0a00" />
+          </motion.button>
+        </div>
+
+        {mobileRight.map(({ to, icon: Icon, label }) => (
+          <NavLink key={to} to={to} end={to === '/'} className="flex-1">
+            {({ isActive }) => (
+              <motion.div
+                whileTap={{ scale: 0.82 }}
+                className="relative flex flex-col items-center justify-center h-full gap-0.5"
+              >
                 {isActive && (
                   <motion.div
                     layoutId="bottom-tab-line"

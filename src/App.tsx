@@ -8,11 +8,11 @@ import { SetDetail } from './pages/SetDetail';
 import { Collection } from './pages/Collection';
 import { Wishlist } from './pages/Wishlist';
 import { Search } from './pages/Search';
-import { Scan } from './pages/Scan';
 import { ResetPassword } from './pages/ResetPassword';
 import { Settings } from './pages/Settings';
 import { AuthProvider } from './lib/auth';
 import { AuthSync } from './components/AuthSync';
+import { ScanModal } from './components/ScanModal';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,7 +43,6 @@ function AppRoutes() {
           <Route path="/collection" element={<Collection />} />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="/search" element={<Search />} />
-          <Route path="/scan" element={<Scan />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/reset-password" element={<ResetPassword />} />
         </Routes>
@@ -81,6 +80,7 @@ function App() {
             <AuthSync />
             <Navbar />
             <AppRoutes />
+            <ScanModal />
           </div>
         </HashRouter>
       </AuthProvider>

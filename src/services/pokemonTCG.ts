@@ -143,6 +143,22 @@ export const pokemonTCGService = {
     return (data ?? []).map(rowToSet);
   },
 
+  async getAllSets(): Promise<PokemonSet[]> {
+    if (isNativePlatform()) {
+      const res = await catalogService.getSets();
+      return res.data;
+    }
+
+    const { data, error } = await supabase
+      .from('sets')
+      .select('*')
+      .in('language', ['en', 'ja', 'th'])
+      .order('release_date', { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []).map(rowToSet);
+  },
+
   async getSet(setId: string, lang: string = 'en'): Promise<PokemonSet> {
     if (isNativePlatform()) {
       const s = await catalogService.getSet(setId);
