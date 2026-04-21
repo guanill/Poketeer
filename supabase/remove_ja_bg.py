@@ -105,13 +105,14 @@ def main():
     ja_sets = [s for s in (res.data or []) if s.get("logo_url")]
     print(f"\nJA sets with logo_url: {len(ja_sets)}")
 
-    # Filter to only pokemon-card.com images (skip already-processed ones)
+    # Process any image still hosted outside our own Supabase storage bucket
+    from urllib.parse import urlparse
+    own_host = urlparse(SUPABASE_URL).netloc
     to_process = [
         s for s in ja_sets
-        if "pokemon-card.com" in (s["logo_url"] or "")
-        or "asia.pokemon-card.com" in (s["logo_url"] or "")
+        if own_host and own_host not in (s["logo_url"] or "")
     ]
-    print(f"Sets with pokemon-card.com images: {len(to_process)}\n")
+    print(f"Sets still on external CDNs: {len(to_process)}\n")
 
     updated = 0
     errors = 0

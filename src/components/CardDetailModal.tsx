@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check } from 'lucide-react';
+import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check, ZoomIn } from 'lucide-react';
 import type { PokemonCard, CardCondition, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
 import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
+import { ImageZoom } from './ImageZoom';
 
 const VARIANT_META: Record<CardVariant, { label: string; color: string; bg: string }> = {
   normal: { label: 'Normal', color: '#9ca3af', bg: 'rgba(156,163,175,0.15)' },
@@ -27,6 +28,7 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
   const [manualPriceInput, setManualPriceInput] = useState('');
   const [addQty, setAddQty] = useState(1);
   const [addedFlash, setAddedFlash] = useState(0);
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   const owned = useCollectionStore(s => card ? s.owned[card.id] : undefined);
   const inWishlist = useCollectionStore(s => card ? s.isInWishlist(card.id) : false);
@@ -118,14 +120,25 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
               <div className="shrink-0 flex justify-center sm:block">
                 <motion.div className="relative">
                   {(card.images.large || card.images.small) ? (
-                    <motion.img
-                      layoutId={`card-img-${card.id}`}
-                      src={card.images.large || card.images.small}
-                      alt={card.name}
-                      className="w-36 sm:w-44 rounded-xl"
-                      style={{ boxShadow: `0 20px 40px ${rarityColor}40` }}
-                      transition={{ type: 'spring', stiffness: 200, damping: 28 }}
-                    />
+                    <div className="relative group/img">
+                      <motion.img
+                        layoutId={`card-img-${card.id}`}
+                        src={card.images.large || card.images.small}
+                        alt={card.name}
+                        onClick={() => setZoomOpen(true)}
+                        className="w-36 sm:w-44 rounded-xl cursor-zoom-in"
+                        style={{ boxShadow: `0 20px 40px ${rarityColor}40` }}
+                        transition={{ type: 'spring', stiffness: 200, damping: 28 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setZoomOpen(true)}
+                        aria-label="Zoom image"
+                        className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-sm"
+                      >
+                        <ZoomIn size={14} />
+                      </button>
+                    </div>
                   ) : (
                     <div
                       className="w-36 sm:w-44 rounded-xl flex flex-col items-center justify-center gap-2"
@@ -441,6 +454,13 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
           </div>
         </motion.div>
       </div>
+
+      {/* HD zoom overlay — pinch/wheel to zoom, drag to pan, double-click/tap to toggle */}
+      <ImageZoom
+        src={zoomOpen ? (card.images.large || card.images.small) : null}
+        alt={card.name}
+        onClose={() => setZoomOpen(false)}
+      />
     </AnimatePresence>
   );
 }

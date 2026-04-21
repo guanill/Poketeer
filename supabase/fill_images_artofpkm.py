@@ -37,39 +37,170 @@ SESSION.headers["User-Agent"] = "Mozilla/5.0 poketeer-bot"
 
 # Map: our DB set_id → artofpkm /sets/{id}
 SET_MAP = {
-    # MEGA era
-    "M4-ja":    585,  # Ninja Spinner
-    "M3-ja":    583,  # Nihil Zero / ムニキスゼロ
-    "M2pt5-ja": 579,  # Mega Dream ex
-    "M2-ja":    575,  # Inferno X
-    "M1S-ja":   571,  # Mega Symphonia / メガシンフォニア
-    "M1-ja":    570,  # Mega Brave
+    # PMCG era
+    "PMCG1-ja": 6,    # Base Set
+    "PMCG2-ja": 8,    # Pokémon Jungle
+    "PMCG3-ja": 9,    # The Secret of the Fossil
+    "PMCG4-ja": 10,   # Rocket Gang
+    "PMCG5-ja": 18,   # Gym Expansion 1
+    "PMCG6-ja": 25,   # Gym Expansion 2
+    # Neo era
+    "neo1-ja":  31,   # Gold, Silver, to a New World...
+    "neo2-ja":  34,   # Crossing the Ruins...
+    "neo3-ja":  40,   # Awakening Legends
+    "neo4-ja":  43,   # Darkness, and to Light...
+    "VS1-ja":   46,   # Pokémon Card★VS
+    "web1-ja":  50,   # Pokémon Card★web
+    # e-Card era
+    "E1-ja":    51,   # Base Expansion Pack
+    "E2-ja":    56,   # The Town on No Map
+    "E3-ja":    57,   # Wind from the Sea
+    "E4-ja":    59,   # Split Earth
+    "E5-ja":    61,   # Mysterious Mountains
+    # ADV era
+    "ADV1-ja":  65,   # ADV Expansion Pack 1
+    "ADV2-ja":  71,   # Miracle of the Desert
+    "ADV3-ja":  73,   # Rulers of the Heavens
+    "ADV4-ja":  79,   # Magma VS Aqua: Two Ambitions
+    "ADV5-ja":  84,   # The Broken Seal
+    # PCG era
+    "PCG1-ja":  88,   # Flight of Legends
+    "PCG2-ja":  91,   # Clash of the Blue Sky
+    "PCG3-ja":  100,  # Rocket Gang Strikes Back
+    "PCG4-ja":  116,  # Golden Sky, Silvery Ocean
+    "PCG5-ja":  117,  # Mirage Forest
+    "PCG6-ja":  127,  # Holon Research Tower
+    "PCG7-ja":  130,  # Holon Phantom
+    "PCG8-ja":  134,  # Miracle Crystal
+    "PCG9-ja":  137,  # Offense and Defense of the Furthest Ends
+    "PCG10-ja": 119,  # World Champions Pack
+    # LEGEND era
+    "L1a-ja":   203,  # HeartGold Collection
+    "L1b-ja":   204,  # SoulSilver Collection
+    "L2-ja":    213,  # Reviving Legends
+    "LL-ja":    217,  # Lost Link
+    "L3-ja":    220,  # Clash at the Summit
+    # XY era
+    "XY1a-ja":  285,  # Collection X
+    "XY1b-ja":  286,  # Collection Y
+    "XY2-ja":   290,  # Wild Blaze
+    "XY3-ja":   294,  # Rising Fist
+    "XY4-ja":   296,  # Phantom Gate
+    "XY5a-ja":  299,  # Gaia Volcano
+    "CP1-ja":   301,  # Double Crisis
+    "XY6-ja":   305,  # Emerald Break
+    "XY7-ja":   308,  # Bandit Ring
+    "CP2-ja":   309,  # Legendary Holo Collection
+    "XY8a-ja":  521,  # Blue Shock
+    "XY8b-ja":  522,  # Red Flash
+    "XY9-ja":   526,  # Rage of the Broken Heavens
+    "CP3-ja":   527,  # Pokékyun Collection
+    "XY10-ja":  528,  # Awakening Psychic King
+    "CP4-ja":   531,  # Premium Champion Pack
+    "CP5-ja":   534,  # Cruel Traitor
+    "CP6-ja":   536,  # 20th Anniversary
+    # SM era
+    "SM0-ja":   323,  # Pikachu and their New Friends
+    "SM1S-ja":  325,  # Collection Sun
+    "SM1M-ja":  326,  # Collection Moon
+    "SM1+-ja":  332,  # Sun & Moon
+    "SM2K-ja":  333,  # Islands Await You
+    "SM2L-ja":  330,  # Alolan Moonlight
+    "sm2+-ja":  335,  # Beyond A New Challenge
+    "SM3+-ja":  341,  # Shining Legend
+    "SM3H-ja":  339,  # Did You See the Fighting Rainbow
+    "SM3N-ja":  338,  # Light-Devouring Darkness
+    "SM4+-ja":  345,  # GX Battle Boost
+    "SM4A-ja":  343,  # Awakening Hero
+    "SM4S-ja":  342,  # Ultra Dimensional Beast
+    "SM5+-ja":  352,  # Ultra Forces
+    "SM5M-ja":  349,  # Ultra Moon
+    "SM5S-ja":  350,  # Ultra Sun
+    "SM6-ja":   355,  # Forbidden Light
+    "SM6a-ja":  356,  # Dragon Storm
+    "SM6b-ja":  357,  # Champion Road
+    "SM7-ja":   359,  # Sky-Splitting Charisma
+    "SM7a-ja":  360,  # Thunderclap Spark
+    "SM7b-ja":  362,  # Fairy Rise
+    "SM8-ja":   364,  # Super Burst Impact
+    "SM8a-ja":  366,  # Dark Order
+    "SM8b-ja":  368,  # GX Ultra Shiny
+    "SM9-ja":   372,  # Tag Bolt
+    "SM9a-ja":  373,  # Night Unison
+    "SM9b-ja":  376,  # Full Metal Wall
+    "SM10-ja":  378,  # Double Blaze
+    "sn10a-ja": 381,  # GG End
+    "SMP2-ja":  382,  # Detective Pikachu
+    "SM10b-ja": 383,  # Sky Legend
+    "sn11-ja":  386,  # Miracle Twin
+    "SM11a-ja": 387,  # Remix Bout
+    "SM11b-ja": 388,  # Dream League
+    "SM12-ja":  391,  # Alter Genesis
+    "SM12a-ja": 392,  # Tag Team GX All Stars
+    # SW&SH era
+    "S1H-ja":   399,  # Shield
+    "S1W-ja":   400,  # Sword
+    "S1a-ja":   404,  # VMAX Rising
+    "S2-ja":    405,  # Rebellion Crash
+    "S2a-ja":   408,  # Explosive Walker
+    "S3-ja":    410,  # Infinity Zone
+    "S3a-ja":   411,  # Legendary Heartbeat
+    "S4-ja":    415,  # Astonishing Volt Tackle
+    "S4a-ja":   419,  # Shiny Star V
+    "S5R-ja":   423,  # Rapid Strike Master
+    "S5I-ja":   424,  # Single Strike Master
+    "S5a-ja":   427,  # Matchless Fighters
+    "S6H-ja":   429,  # Silver Lance
+    "S6K-ja":   431,  # Jet-Black Poltergeist
+    "S6a-ja":   432,  # Eevee Heroes
+    "S7R-ja":   437,  # Blue Sky Stream
+    "S7D-ja":   438,  # Skyscraping Perfect
+    "S8-ja":    442,  # Fusion Arts
+    "S8a-ja":   446,  # 25th Anniversary Collection
+    "S8b-ja":   451,  # VMAX Climax
+    "S9-ja":    453,  # Star Birth
+    "S9a-ja":   456,  # Battle Region
+    "S10D-ja":  459,  # Time Gazer
+    "S10P-ja":  460,  # Space Juggler
+    "S10a-ja":  462,  # Dark Fantasma
+    "S10b-ja":  464,  # Pokémon GO
+    "S11-ja":   466,  # Lost Abyss
+    "S11a-ja":  473,  # Incandescent Arcana
+    "S12-ja":   476,  # Paradigm Trigger
+    "S12a-ja":  479,  # VSTAR Universe
     # SV era
-    "SV11W-ja": 566,  # White Flare
-    "SV11B-ja": 565,  # Black Bolt
-    "SV10-ja":  563,  # Glory of Team Rocket
-    "SV9a-ja":  557,  # Hot Wind Arena
-    "SV9-ja":   556,  # Battle Partners
-    "SV8a-ja":  552,  # Terastal Festival ex
-    "SV8-ja":   551,  # Electric Breaker
-    "SV7a-ja":  544,  # Paradise Dragona
-    "SV7-ja":   520,  # Stellar Miracle
-    "SV6a-ja":  519,  # Night Wanderer
-    "SV6-ja":   515,  # Mask of Change
-    "SV5a-ja":  513,  # Crimson Haze
-    "SV5K-ja":  508,  # Wild Force
-    "SV5M-ja":  509,  # Cyber Judge
-    "SV4a-ja":  506,  # Shiny Treasure ex
+    "SV1S-ja":  481,  # Scarlet ex
+    "SV1V-ja":  482,  # Violet ex
+    "SV1a-ja":  485,  # Triplet Beat
+    "SV2P-ja":  484,  # Snow Hazard
+    "SV2D-ja":  486,  # Clay Burst
+    "SV2a-ja":  490,  # Pokémon Card 151
+    "SV3-ja":   493,  # Ruler of the Black Flame
+    "SV3a-ja":  502,  # Raging Surf
     "SV4K-ja":  501,  # Ancient Roar
     "SV4M-ja":  503,  # Future Flash
-    "SV3a-ja":  502,  # Raging Surf
-    "SV3-ja":   493,  # Ruler of the Black Flame
-    "SV2a-ja":  490,  # Pokémon Card 151
-    "SV2D-ja":  486,  # Clay Burst
-    "SV2P-ja":  484,  # Snow Hazard
-    "SV1a-ja":  485,  # Triplet Beat
-    "SV1V-ja":  482,  # Violet ex
-    "SV1S-ja":  481,  # Scarlet ex
+    "SV4a-ja":  506,  # Shiny Treasure ex
+    "SV5K-ja":  508,  # Wild Force
+    "SV5M-ja":  509,  # Cyber Judge
+    "SV5a-ja":  513,  # Crimson Haze
+    "SV6-ja":   515,  # Mask of Change
+    "SV6a-ja":  519,  # Night Wanderer
+    "SV7-ja":   520,  # Stellar Miracle
+    "SV7a-ja":  544,  # Paradise Dragona
+    "SV8-ja":   551,  # Electric Breaker
+    "SV8a-ja":  552,  # Terastal Festival ex
+    "SV9-ja":   556,  # Battle Partners
+    "SV9a-ja":  557,  # Hot Wind Arena
+    "SV10-ja":  563,  # Glory of Team Rocket
+    "SV11B-ja": 565,  # Black Bolt
+    "SV11W-ja": 566,  # White Flare
+    # MEGA era
+    "M1-ja":    570,  # Mega Brave
+    "M1S-ja":   571,  # Mega Symphonia
+    "M2-ja":    575,  # Inferno X
+    "M2pt5-ja": 579,  # Mega Dream ex
+    "M3-ja":    583,  # Nihil Zero
+    "M4-ja":    585,  # Ninja Spinner
 }
 
 

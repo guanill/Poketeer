@@ -9,6 +9,7 @@ import { SetCard } from '../components/SetCard';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { useCollectionStore } from '../store/collectionStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { getEra, ERA_ORDER } from '../utils/eras';
 
 // Stable empty array so SetCard memo doesn't see a new reference each render
 const EMPTY: string[] = [];
@@ -20,6 +21,7 @@ const LANG_LABELS: Record<Lang, { flag: string; label: string }> = {
   ja: { flag: '🇯🇵', label: 'Japanese' },
   th: { flag: '🇹🇭', label: 'Thai' },
 };
+
 
 
 export function Sets() {
@@ -53,7 +55,7 @@ export function Sets() {
   );
 
   const { data: sets, isLoading } = useQuery({
-    queryKey: ['sets', 'v2', lang],
+    queryKey: ['sets', 'v3', lang],
     queryFn: () => pokemonTCGService.getSets(lang),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 15,
@@ -74,7 +76,7 @@ export function Sets() {
     // Prefetch the other enabled languages in the background so switching is instant
     (['en', 'ja', 'th'] as Lang[]).filter(l => l !== lang && enabledLangs[l]).forEach(l => {
       queryClient.prefetchQuery({
-        queryKey: ['sets', 'v2', l],
+        queryKey: ['sets', 'v3', l],
         queryFn: () => pokemonTCGService.getSets(l),
         staleTime: 1000 * 60 * 10,
       });
@@ -90,7 +92,7 @@ export function Sets() {
     // Fire-and-forget: warm the card cache for the first visible sets
     if (l === 'ja' || l === 'th') {
       queryClient.fetchQuery({
-        queryKey: ['sets', 'v2', l],
+        queryKey: ['sets', 'v3', l],
         queryFn: () => pokemonTCGService.getSets(l),
         staleTime: 1000 * 60 * 10,
       }).then((allSets) => {
@@ -154,6 +156,28 @@ export function Sets() {
     }
     return result;
   }, [sets, deferredSearch, deferredSeries, deferredSort, ownedBySet]);
+
+  // Group into eras only when sorted by date (chronological). Other sorts stay flat.
+  const groupedSets = useMemo(() => {
+    if (deferredSort !== 'date') return null;
+    const byEra = new Map<string, PokemonSet[]>();
+    for (const s of filteredSets) {
+      const era = getEra(s.series);
+      if (!byEra.has(era)) byEra.set(era, []);
+      byEra.get(era)!.push(s);
+    }
+    // Default date sort is descending: newest era first, newest set first inside each era.
+    for (const arr of byEra.values()) {
+      arr.sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''));
+    }
+    const rank = (era: string) => {
+      const i = ERA_ORDER.indexOf(era);
+      return i === -1 ? -1 : i; // unknown eras go to the top (newest-looking)
+    };
+    return [...byEra.keys()]
+      .sort((a, b) => rank(b) - rank(a) || a.localeCompare(b))
+      .map(era => ({ era, sets: byEra.get(era)! }));
+  }, [filteredSets, deferredSort]);
 
   const startedSets = filteredSets.filter(s => (ownedBySet[s.id] ?? []).length > 0).length;
 
@@ -278,6 +302,72 @@ export function Sets() {
       {/* ── Sets Grid ────────────────────────────────────── */}
       {isLoading ? (
         <LoadingSkeleton count={12} type="set" />
+      ) : groupedSets ? (
+        <AnimatePresence mode="popLayout">
+          <div className="space-y-10">
+            {groupedSets.map(({ era, sets: eraSets }, gi) => {
+              // Running global index across eras so stagger delay is consistent
+              const baseIndex = groupedSets.slice(0, gi).reduce((n, g) => n + g.sets.length, 0);
+              return (
+                <section key={era} className="relative md:pr-10">
+                  {/* Desktop right rail: vertical line + sticky era label */}
+                  <div className="hidden md:block absolute top-0 bottom-0 right-2 w-px bg-gradient-to-b from-amber-400/10 via-amber-400/25 to-amber-400/5 pointer-events-none" />
+                  <div className="hidden md:block absolute top-0 bottom-0 right-0 w-10 pointer-events-none">
+                    <div className="sticky top-24 flex flex-col items-center">
+                      <span className="text-[10px] font-black tracking-[0.25em] uppercase text-amber-400/70"
+                        style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>
+                        {era}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Mobile sticky era header — pinned chip with gradient ring + set count */}
+                  <div className="md:hidden sticky top-2 z-20 mb-4 flex justify-center pointer-events-none">
+                    <div
+                      className="pointer-events-auto relative rounded-full p-[1px]"
+                      style={{
+                        background:
+                          'linear-gradient(135deg, rgba(245,158,11,0.75) 0%, rgba(139,92,246,0.65) 55%, rgba(245,158,11,0.55) 100%)',
+                        boxShadow:
+                          '0 6px 22px rgba(0,0,0,0.55), 0 0 0 1px rgba(245,158,11,0.12)',
+                      }}
+                    >
+                      <div
+                        className="flex items-center gap-2 pl-2.5 pr-3 py-1.5 rounded-full backdrop-blur-md"
+                        style={{
+                          background:
+                            'linear-gradient(145deg, rgba(20,20,42,0.92) 0%, rgba(13,13,32,0.92) 100%)',
+                        }}
+                      >
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inset-0 rounded-full animate-ping bg-amber-400/60" />
+                          <span className="relative rounded-full h-2 w-2 bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.9)]" />
+                        </span>
+                        <span className="text-[11px] font-black tracking-[0.18em] uppercase bg-gradient-to-r from-amber-200 via-amber-400 to-amber-200 bg-clip-text text-transparent">
+                          {era}
+                        </span>
+                        <span className="text-[10px] font-bold text-violet-300/70 tabular-nums pl-1 border-l border-white/10">
+                          {eraSets.length}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {eraSets.map((set, i) => (
+                      <SetCard
+                        key={set.id}
+                        set={set}
+                        index={baseIndex + i}
+                        ownedCardIds={ownedBySet[set.id] ?? EMPTY}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </AnimatePresence>
       ) : (
         <AnimatePresence mode="popLayout">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -5,6 +5,7 @@ import { Calendar, Hash } from 'lucide-react';
 import type { PokemonSet } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
 import { ProgressRing } from './ProgressRing';
+import { getEra } from '../utils/eras';
 
 interface SetCardProps {
   set: PokemonSet;
@@ -61,7 +62,7 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
           <motion.div
             animate={{ opacity: [0.3, 0.7, 0.3] }}
             transition={{ duration: 2, repeat: Infinity }}
-            className="absolute top-2 right-2 text-yellow-400 text-lg"
+            className="absolute top-2 left-2 text-yellow-400 text-lg"
           >
             ✨
           </motion.div>
@@ -78,6 +79,19 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
           opacity: 0.9,
         }}
       />
+
+      {/* Set code badge — top-right corner */}
+      <span
+        className="absolute top-2 right-2 z-20 px-1.5 py-0.5 rounded-md text-[9px] font-black tracking-wider uppercase text-amber-200/90 font-mono pointer-events-none"
+        style={{
+          background: 'linear-gradient(145deg, rgba(20,20,42,0.85), rgba(13,13,32,0.85))',
+          border: '1px solid rgba(245,158,11,0.25)',
+          backdropFilter: 'blur(4px)',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
+        }}
+      >
+        {set.id}
+      </span>
 
       {/* EN sets: wide logo banner on top */}
       {isEnLogo && (
@@ -119,7 +133,7 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
                 {localName}
               </h3>
               {enName && <p className="text-[11px] text-gray-400 leading-tight">{enName}</p>}
-              <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{getEra(set.series)}</p>
               <div className="flex items-center gap-3 mt-1">
                 <div className="flex items-center gap-1 text-xs text-gray-500">
                   <Hash size={10} />
@@ -181,7 +195,7 @@ export const SetCard = memo(function SetCard({ set, index = 0, ownedCardIds }: S
                   {localName}
                 </h3>
                 {enName && <p className="text-[11px] text-gray-400 leading-tight">{enName}</p>}
-                <p className="text-xs text-gray-500 mt-0.5">{set.series}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{getEra(set.series)}</p>
                 <div className="flex items-center gap-3 mt-1.5">
                   <div className="flex items-center gap-1 text-xs text-gray-500">
                     <Hash size={10} />
