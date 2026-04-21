@@ -15,6 +15,15 @@ import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
 const HF_OCR_URL = 'https://agm3000-poketeer-card-ocr.hf.space';
 
+const SCAN_DEBUG = import.meta.env.DEV;
+const scanLog = (...args: unknown[]) => { if (SCAN_DEBUG) console.log(...args); };
+const scanWarn = (...args: unknown[]) => { if (SCAN_DEBUG) console.warn(...args); };
+
+// Strip chars that PostgREST treats as control chars inside .or() ilike filters.
+function sanitizeIlike(v: string): string {
+  return v.replace(/[,()"%*\\]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // ── PaddleOCR via HF Space ──────────────────────────────────────────────────
 
 interface PaddleOcrResult {
@@ -30,11 +39,17 @@ interface PaddleOcrResult {
 
 let _hfWarmupDone = false;
 
-/** Ping the HF OCR Space so it wakes from sleep before the user scans. */
+/**
+ * Wake the HF OCR + embed Spaces. A GET /health hits the gateway but many HF
+ * Spaces only spin up the Python worker on first inference call, so we also
+ * fire a cheap HEAD on /ocr which HF routes through the Python handler.
+ */
 export function warmupHfSpace(): void {
   if (_hfWarmupDone) return;
   _hfWarmupDone = true;
+  // Ping both spaces in parallel — fire-and-forget.
   fetch(`${HF_OCR_URL}/health`, { method: 'GET' }).catch(() => {});
+  fetch(`${HF_SPACE_URL}/health`, { method: 'GET' }).catch(() => {});
 }
 
 async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage | 'auto' = 'auto'): Promise<PaddleOcrResult | null> {
@@ -45,7 +60,7 @@ async function tryPaddleOcr(imageFile: File | Blob, lang: ScanLanguage | 'auto' 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
-    const res = await fetch(`${HF_OCR_URL}/ocr?lang=${lang}`, {
+    const res = await fetch(`${HF_OCR_URL}/ocr?lang=${encodeURIComponent(lang)}`, {
       method: 'POST',
       body: formData,
       signal: controller.signal,
@@ -300,22 +315,28 @@ function detectSupertype(allText: PaddleOcrResult['all_text']): string {
 
 /**
  * Generate OCR char-correction variants of a name for ilike queries.
- * E.g. "Charizand" → ["Charizand", "Charizard"] (d↔rd isn't a char swap,
- * but "0"↔"O", "1"↔"l"/"I", "5"↔"S" are common OCR confusions).
+ * Only apply digit→letter swaps (digits inside a card name are always a
+ * misread); never apply letter→digit swaps because real names with an O, l,
+ * S, B, or m would get corrupted. Also try the common rn↔m confusion.
  */
 function nameSearchVariants(name: string): string[] {
   const variants = new Set<string>([name]);
-  // Common OCR char swaps (reverse of number corrections)
-  const swaps: [RegExp, string][] = [
-    [/0/g, 'O'], [/O/g, '0'],
-    [/1/g, 'l'], [/l/g, '1'],
-    [/5/g, 'S'], [/S/g, '5'],
-    [/8/g, 'B'], [/B/g, '8'],
-    [/rn/g, 'm'], [/m/g, 'rn'], // OCR often reads "m" as "rn"
+  const digitToLetter: [RegExp, string][] = [
+    [/0/g, 'o'],
+    [/1/g, 'i'],
+    [/5/g, 's'],
+    [/8/g, 'b'],
   ];
-  for (const [pattern, replacement] of swaps) {
-    const variant = name.replace(pattern, replacement);
-    if (variant !== name && variant.length >= 2) variants.add(variant);
+  for (const [pattern, replacement] of digitToLetter) {
+    if (pattern.test(name)) {
+      const variant = name.replace(pattern, replacement);
+      if (variant !== name && variant.length >= 2) variants.add(variant);
+    }
+  }
+  // rn → m (OCR often splits "m" as "rn")
+  if (name.includes('rn')) {
+    const v = name.replace(/rn/g, 'm');
+    if (v.length >= 2) variants.add(v);
   }
   return [...variants];
 }
@@ -507,9 +528,11 @@ async function searchByNumber(
 
     // Build or-filter: match name OR name_en for each variant
     for (const nameVar of allNameSearchTerms) {
+      const safe = sanitizeIlike(nameVar);
+      if (safe.length < 2) continue;
       const orFilter = lang !== 'en'
-        ? `name.ilike.%${nameVar}%,name_en.ilike.%${nameVar}%`
-        : `name.ilike.%${nameVar}%`;
+        ? `name.ilike.%${safe}%,name_en.ilike.%${safe}%`
+        : `name.ilike.%${safe}%`;
 
       // Try exact numbers (batch with .in())
       {
@@ -847,7 +870,10 @@ export async function supabaseScan(
   let usedPaddle = false;
   let effectiveLang = lang;  // May be overridden by auto-detection
 
-  const paddleResult = await tryPaddleOcr(imageFile, 'auto');
+  // Pass non-English user pick as a hint; otherwise let PaddleOCR auto-detect
+  // (auto does best for mixed Latin cards and avoids locking EN cards to 'en').
+  const paddleLang: ScanLanguage | 'auto' = lang === 'en' ? 'auto' : lang;
+  const paddleResult = await tryPaddleOcr(imageFile, paddleLang);
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;
@@ -883,18 +909,15 @@ export async function supabaseScan(
     if (hpHint) ocrText += ` | hp: ${hpHint}`;
     if (supertypeHint) ocrText += ` | type: ${supertypeHint}`;
 
-    console.log('[scan] PaddleOCR →', ocrText);
+    scanLog('[scan] PaddleOCR →', ocrText);
     if (paddleResult.all_text) {
-      console.log('[scan] all text:', paddleResult.all_text.map(t => `${t.region}: "${t.text}" (${t.confidence})`).join(', '));
+      scanLog('[scan] all text:', paddleResult.all_text.map(t => `${t.region}: "${t.text}" (${t.confidence})`).join(', '));
     }
   }
 
-  // 1. Start visual matching (after we know the effective language)
-  const visualPromise = tryVisualMatch(imageFile, topK, effectiveLang).catch(() => [] as ScanMatch[]);
-
   // 3. Fallback: client-side Tesseract.js if PaddleOCR failed
   if (!usedPaddle) {
-    console.log('[scan] PaddleOCR unavailable, falling back to Tesseract.js');
+    scanLog('[scan] PaddleOCR unavailable, falling back to Tesseract.js');
 
     let nameResult: OcrResult = { text: '', confidence: 0 };
     let numberResult: OcrResult = { text: '', confidence: 0 };
@@ -905,7 +928,7 @@ export async function supabaseScan(
         ocrMultiPass(imageFile, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
       ]);
     } catch (err) {
-      console.warn('[supabaseScan] Crop/OCR failed:', err);
+      scanWarn('[supabaseScan] Crop/OCR failed:', err);
     }
 
     const nameText = nameResult.text;
@@ -918,11 +941,11 @@ export async function supabaseScan(
     nameQuery = extractNameQuery(nameText, lang);
     setHint = extractSetHint(numberText);
 
-    console.log('[scan] Tesseract name:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
-    console.log('[scan] Tesseract number:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
+    scanLog('[scan] Tesseract name:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
+    scanLog('[scan] Tesseract number:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
   }
 
-  console.log('[scan] extracted → number:', cardNumber, '| name:', nameQuery, '| set:', setHint);
+  scanLog('[scan] extracted → number:', cardNumber, '| name:', nameQuery, '| set:', setHint);
 
   // Clean OCR name before searching
   const { cleaned: cleanedNameQuery, baseName: baseNameQuery } = cleanOcrName(nameQuery);
@@ -954,7 +977,7 @@ export async function supabaseScan(
       ocrMatches = await searchByNumber(cardNumber, cleanedNameQuery, topK, tryLang, setHint, hpHint, supertypeHint);
       if (ocrMatches.length > 0) {
         effectiveLang = tryLang;
-        console.log('[scan] Retried with lang:', tryLang, '→ found', ocrMatches.length, 'matches');
+        scanLog('[scan] Retried with lang:', tryLang, '→ found', ocrMatches.length, 'matches');
         break;
       }
     }
@@ -986,8 +1009,12 @@ export async function supabaseScan(
     } catch { /* ignore */ }
   }
 
-  // 4. Await visual results and merge
-  const visualMatches = await visualPromise;
+  // 4. Only call the visual embed Space when OCR didn't nail it. Saves HF
+  //    quota and halves cold-start risk when OCR is confident.
+  const topOcrConfidence = ocrMatches[0]?.confidence ?? 0;
+  const visualMatches: ScanMatch[] = topOcrConfidence >= 0.90
+    ? []
+    : await tryVisualMatch(imageFile, topK, effectiveLang).catch(() => [] as ScanMatch[]);
 
   const matches = visualMatches.length > 0
     ? mergeResults(ocrMatches, visualMatches, topK)

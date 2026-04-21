@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera, Upload, X, Scan, AlertTriangle, CheckCircle,
-  Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi,
+  Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi, Globe,
 } from 'lucide-react';
 import type { ScanMatch } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
@@ -380,14 +380,11 @@ function JobCard({
 // Main component
 // ---------------------------------------------------------------------------
 
-type UIMode = 'idle' | 'error';
-
 export function CardScanner() {
   const uid = useId();
-  const [mode, setMode]           = useState<UIMode>('idle');
   const jobs = useScanStore(s => s.jobs);
-  // Language is auto-detected — always pass 'en' as default (overridden by PaddleOCR)
-  const scanLang = 'en' as const;
+  const scanLang = useScanStore(s => s.scanLang);
+  const setScanLang = useScanStore(s => s.setScanLang);
   const addJob = useScanStore(s => s.addJob);
   const updateJob = useScanStore(s => s.updateJob);
   const toggleJob = useScanStore(s => s.toggleJob);
@@ -395,7 +392,6 @@ export function CardScanner() {
   const clearDone = useScanStore(s => s.clearDone);
   const nextJobId = useScanStore(s => s.nextJobId);
 
-  const [errorMsg]   = useState('');
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [cameraSupported, setCameraSupported] = useState<boolean | null>(null);
   const [shotFlash, setShotFlash] = useState(false);
@@ -408,6 +404,7 @@ export function CardScanner() {
   const lastScanTimeRef = useRef(0);
   const autoScanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stableFrameCountRef = useRef(0);
+  const shotFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState(true);
 
   const [isMobile] = useState(() =>
@@ -415,16 +412,28 @@ export function CardScanner() {
     ('ontouchstart' in window || window.innerWidth < 640)
   );
 
-  // Preload Tesseract worker and wake HF Space so first scan is fast
-  useEffect(() => { preloadWorker('en'); warmupHfSpace(); }, []);
+  // Preload Tesseract worker for user's chosen scan language + wake HF Spaces.
+  useEffect(() => { preloadWorker(scanLang); warmupHfSpace(); }, [scanLang]);
 
   useEffect(() => {
-    cardScanService.checkHealth().then(setBackendOk);
+    // Only web needs a meaningful backend health check; native path is always
+    // available (tesseract bundled), so skip the fake "always-true" call there.
+    if (isNativePlatform()) {
+      setBackendOk(true);
+    } else {
+      cardScanService.checkHealth().then(setBackendOk);
+    }
     const supported =
-      typeof navigator !== 'undefined' &&
-      !!navigator.mediaDevices &&
-      typeof navigator.mediaDevices.getUserMedia === 'function';
+      typeof navigator !== 'undefined'
+      && !!navigator.mediaDevices
+      && typeof navigator.mediaDevices.getUserMedia === 'function';
     setCameraSupported(supported);
+  }, []);
+
+  // Cleanup any pending shot-flash timer on unmount so we don't
+  // setState after the component is gone.
+  useEffect(() => () => {
+    if (shotFlashTimerRef.current) clearTimeout(shotFlashTimerRef.current);
   }, []);
 
   // Auto-start inline camera on mobile
@@ -498,7 +507,8 @@ export function CardScanner() {
     lastScanTimeRef.current = now;
 
     setShotFlash(true);
-    setTimeout(() => setShotFlash(false), 180);
+    if (shotFlashTimerRef.current) clearTimeout(shotFlashTimerRef.current);
+    shotFlashTimerRef.current = setTimeout(() => setShotFlash(false), 180);
 
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -717,9 +727,11 @@ export function CardScanner() {
       {/* ============================================================== */}
       <div className="max-w-xl mx-auto space-y-4">
 
-        {/* Backend offline banner */}
+        {/* Backend offline banner — only meaningful on native (phones talking
+            to a local PC scanner server). On web we go through Supabase + HF
+            Space so this dev-only "run python main.py" hint doesn't apply. */}
         <AnimatePresence>
-          {backendOk === false && (
+          {isNativePlatform() && backendOk === false && (
             <motion.div
               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
@@ -734,6 +746,28 @@ export function CardScanner() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Scan language selector */}
+        <div className="flex items-center gap-2 p-2 rounded-xl bg-white/3 border border-white/8">
+          <Globe size={13} className="text-gray-500 shrink-0 ml-1" />
+          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mr-1">Language</span>
+          <div className="flex gap-1">
+            {(['en', 'ja', 'th'] as const).map(l => (
+              <button
+                key={l}
+                onClick={() => setScanLang(l)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                  scanLang === l
+                    ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                    : 'bg-white/5 text-gray-500 border border-white/10 hover:text-gray-300'
+                }`}
+              >
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto mr-1 text-[10px] text-gray-600">auto-detect active</span>
+        </div>
 
         {/* Server connection (native only) */}
         {isNativePlatform() && (
@@ -767,10 +801,8 @@ export function CardScanner() {
           </div>
         )}
 
-        {/* Language is auto-detected by PaddleOCR — no manual selector needed */}
-
         {/* ---- MOBILE: inline camera feed + upload, fits viewport ---- */}
-        {isMobile && mode !== 'error' && (
+        {isMobile && (
           <div className="flex flex-col" style={{ height: 'calc(100svh - 10rem)' }}>
             {cameraSupported !== false ? (
               <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden border border-amber-400/20"
@@ -878,7 +910,7 @@ export function CardScanner() {
         )}
 
         {/* ---- DESKTOP: upload + drag/drop only ---- */}
-        {!isMobile && mode === 'idle' && (
+        {!isMobile && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
             <div
               onDrop={handleDrop}
@@ -895,22 +927,6 @@ export function CardScanner() {
               </div>
             </div>
             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
-          </motion.div>
-        )}
-
-        {/* ERROR */}
-        {mode === 'error' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4 py-12 text-center">
-            <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/25 flex items-center justify-center">
-              <AlertTriangle size={22} className="text-red-400" />
-            </div>
-            <div>
-              <p className="font-semibold text-white">Camera error</p>
-              <p className="text-sm text-gray-400 mt-1 max-w-xs">{errorMsg}</p>
-            </div>
-            <button onClick={() => setMode('idle')} className="px-5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-300 hover:bg-white/10 transition-colors">
-              Go back
-            </button>
           </motion.div>
         )}
 
