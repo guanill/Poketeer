@@ -45,6 +45,13 @@ export function Wishlist() {
     staleTime: 1000 * 60 * 60,
   });
 
+  const { data: selectedCardPriceDetails } = useQuery({
+    queryKey: ['price-details', selectedCard?.id ?? ''],
+    queryFn: () => pokemonTCGService.getPriceDetails(selectedCard!.id),
+    enabled: !!selectedCard,
+    staleTime: 1000 * 60 * 60,
+  });
+
   const cardMap: Record<string, PokemonCard> = {};
   cards?.forEach(c => { cardMap[c.id] = c; });
 
@@ -418,7 +425,11 @@ export function Wishlist() {
         </motion.div>
       )}
 
-      <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
+      <CardDetailModal
+        card={selectedCard}
+        onClose={() => setSelectedCard(null)}
+        priceDetails={selectedCardPriceDetails ?? null}
+      />
     </div>
     </LayoutGroup>
   );

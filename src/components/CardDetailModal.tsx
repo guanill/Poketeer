@@ -221,12 +221,16 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
                   className="mt-3 p-3 rounded-xl border border-white/8"
                   style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))' }}
                 >
-                  {marketPrice ? (
+                  {(marketPrice != null || priceLow != null || priceHigh != null || tcgplayerUrl) ? (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Market Price</p>
-                          <p className="text-2xl font-black text-green-400 mt-0.5">${marketPrice.toFixed(2)}</p>
+                          {marketPrice != null ? (
+                            <p className="text-2xl font-black text-green-400 mt-0.5">${marketPrice.toFixed(2)}</p>
+                          ) : (
+                            <p className="text-sm text-gray-500 italic mt-0.5">No market price</p>
+                          )}
                           {priceLow != null && priceHigh != null && priceHigh > priceLow && (
                             <p className="text-[11px] text-gray-500 mt-0.5">
                               ${priceLow.toFixed(2)} – ${priceHigh.toFixed(2)}

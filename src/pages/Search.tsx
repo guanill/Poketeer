@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Search as SearchIcon, X, Sparkles, Loader2, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import { CardItem } from '../components/CardItem';
@@ -59,6 +59,13 @@ export function Search() {
     },
     enabled: debouncedQuery.length >= 2,
     staleTime: 1000 * 60 * 5,
+  });
+
+  const { data: selectedCardPriceDetails } = useQuery({
+    queryKey: ['price-details', selectedCard?.id ?? ''],
+    queryFn: () => pokemonTCGService.getPriceDetails(selectedCard!.id),
+    enabled: !!selectedCard,
+    staleTime: 1000 * 60 * 60,
   });
 
   const allCards = data?.pages.flatMap((p) => p.data) ?? [];
@@ -305,7 +312,11 @@ export function Search() {
         ) : null}
       </AnimatePresence>
 
-      <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
+      <CardDetailModal
+        card={selectedCard}
+        onClose={() => setSelectedCard(null)}
+        priceDetails={selectedCardPriceDetails ?? null}
+      />
     </div>
     </LayoutGroup>
   );
