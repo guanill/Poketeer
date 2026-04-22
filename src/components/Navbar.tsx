@@ -70,12 +70,11 @@ const navItems = [
   { to: '/collection', icon: BookOpen, label: 'Collection' },
   { to: '/wishlist', icon: Heart, label: 'Wishlist' },
   { to: '/search', icon: Search, label: 'Search' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 // Mobile bottom bar splits around the central FAB
 const mobileLeft  = navItems.slice(0, 3); // Dashboard, Sets, Collection
-const mobileRight = navItems.slice(3);    // Wishlist, Search, Settings
+const mobileRight = navItems.slice(3);    // Wishlist, Search
 
 function UserMenu() {
   const { user, signInWithGoogle, signInWithEmail, signUp, signOut, resetPassword, loading } = useAuth();
@@ -220,6 +219,14 @@ function UserMenu() {
                     <User size={13} />
                     Continue with Email
                   </button>
+                  <NavLink
+                    to="/settings"
+                    onClick={() => setOpen(false)}
+                    className="w-full flex items-center justify-center gap-2 mt-1 py-2 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    <Settings size={11} />
+                    Settings
+                  </NavLink>
                 </div>
               ) : (
                 <form onSubmit={handleEmailSubmit} className="p-3 space-y-2">
@@ -322,9 +329,17 @@ function UserMenu() {
               <p className="text-xs font-bold text-white truncate">{name}</p>
               <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
             </div>
+            <NavLink
+              to="/settings"
+              onClick={() => setOpen(false)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-gray-400 hover:text-violet-300 hover:bg-violet-500/10 transition-colors"
+            >
+              <Settings size={13} />
+              Settings
+            </NavLink>
             <button
               onClick={() => { signOut(); setOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors border-t border-white/5"
             >
               <LogOut size={13} />
               Sign out
