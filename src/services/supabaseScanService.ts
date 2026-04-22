@@ -10,6 +10,7 @@
 
 import { supabase } from '../lib/supabase';
 import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
+import { detectAndCropCard } from '../utils/cardDetection';
 
 // HF Space URLs
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
@@ -823,27 +824,160 @@ async function tryVisualMatch(
   }
 }
 
-/** Merge OCR and visual results — if both agree on a card, boost confidence. */
-function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK: number): ScanMatch[] {
-  const merged = new Map<string, ScanMatch>();
+// ── Calibrated confidence ───────────────────────────────────────────────────
 
-  for (const m of ocrMatches) {
-    merged.set(m.id, { ...m });
+interface CalibrationSignals {
+  numberKnown: boolean;
+  numberExactMatch: boolean;
+  numberNearbyMatch: boolean;
+  nameKnown: boolean;
+  nameSim: number;              // 0–1 fuzzy similarity vs OCR name
+  setMatch: 'exact' | 'partial' | 'mismatch' | 'unknown';
+  hpMatch: 'match' | 'mismatch' | 'unknown';
+  supertypeMatch: 'match' | 'mismatch' | 'unknown';
+  visualKnown: boolean;
+  visualSim: number;            // 0–1 cosine similarity from embedding
+  candidateCount: number;       // candidates in the merged pool
+}
+
+/**
+ * Blend independent scan signals into one calibrated confidence score.
+ *
+ * Uses log-odds addition + sigmoid so each signal contributes additively and
+ * a missing signal simply contributes zero instead of distorting the result.
+ * Weights are hand-tuned to produce honest scores: 0.95+ means "almost
+ * certainly this card", 0.6 means "likely but not sure", <0.5 means "weak".
+ */
+function calibrateConfidence(s: CalibrationSignals): number {
+  // Slight negative prior: picking one of many candidates without evidence
+  // shouldn't come out above 50% just by being the sole match.
+  let logOdds = -0.5;
+
+  // Number — single strongest signal on a Pokemon card.
+  if (s.numberKnown) {
+    if (s.numberExactMatch) logOdds += 2.5;
+    else if (s.numberNearbyMatch) logOdds += 0.4;
+    else logOdds -= 1.0;
   }
 
-  for (const m of visualMatches) {
-    const existing = merged.get(m.id);
-    if (existing) {
-      existing.confidence = Math.min(0.99, existing.confidence + m.confidence * 0.3);
-      existing.method = 'ocr+visual';
-    } else {
-      merged.set(m.id, { ...m });
+  // OCR name fuzzy similarity.
+  if (s.nameKnown) {
+    if (s.nameSim >= 0.9) logOdds += 2.0;
+    else if (s.nameSim >= 0.75) logOdds += 1.0;
+    else if (s.nameSim >= 0.6) logOdds += 0.2;
+    else if (s.nameSim >= 0.45) logOdds -= 0.4;
+    else logOdds -= 1.2;
+  }
+
+  // Visual embedding cosine similarity (independent of OCR → strong signal).
+  if (s.visualKnown) {
+    if (s.visualSim >= 0.85) logOdds += 2.0;
+    else if (s.visualSim >= 0.70) logOdds += 1.0;
+    else if (s.visualSim >= 0.55) logOdds += 0.3;
+    else if (s.visualSim > 0) logOdds -= 0.3;
+  }
+
+  // Set code hint.
+  if (s.setMatch === 'exact') logOdds += 1.2;
+  else if (s.setMatch === 'partial') logOdds += 0.3;
+  else if (s.setMatch === 'mismatch') logOdds -= 1.2;
+
+  // HP match — exact number, strong independent signal.
+  if (s.hpMatch === 'match') logOdds += 0.8;
+  else if (s.hpMatch === 'mismatch') logOdds -= 1.2;
+
+  // Supertype mismatch (Trainer vs Pokemon) is a clear wrong-card signal.
+  if (s.supertypeMatch === 'match') logOdds += 0.3;
+  else if (s.supertypeMatch === 'mismatch') logOdds -= 1.5;
+
+  // Uniqueness penalty: many competing candidates → less sure the top is right.
+  if (s.candidateCount >= 5) logOdds -= 0.2;
+  if (s.candidateCount >= 10) logOdds -= 0.2;
+
+  const p = 1 / (1 + Math.exp(-logOdds));
+  return Math.max(0.05, Math.min(0.99, p));
+}
+
+/** Compare OCR number to card number, tolerant of zero-padding and off-by-N. */
+function compareNumber(ocr: string, candidate: string): 'exact' | 'nearby' | 'none' {
+  const o = ocr.replace(/^0+(?=\d)/, '').toLowerCase();
+  const c = candidate.replace(/^0+(?=\d)/, '').toLowerCase();
+  if (o === c) return 'exact';
+  const oNum = parseInt(o.replace(/\D/g, ''), 10);
+  const cNum = parseInt(c.replace(/\D/g, ''), 10);
+  if (!isNaN(oNum) && !isNaN(cNum) && Math.abs(oNum - cNum) <= 2) return 'nearby';
+  return 'none';
+}
+
+/** Extract per-match signals from OCR context + match fields. */
+function computeSignals(
+  match: ScanMatch,
+  ocrNumber: string | null,
+  ocrName: string,
+  setHint: string,
+  hpHint: string,
+  supertypeHint: string,
+  visualSim: number | null,
+  candidateCount: number,
+): CalibrationSignals {
+  const numberKnown = !!ocrNumber;
+  let numberExactMatch = false;
+  let numberNearbyMatch = false;
+  if (ocrNumber) {
+    const kind = compareNumber(ocrNumber, match.number);
+    numberExactMatch = kind === 'exact';
+    numberNearbyMatch = kind === 'nearby';
+  }
+
+  const nameKnown = ocrName.trim().length >= 2;
+  let nameSim = 0;
+  if (nameKnown) {
+    const { cleaned, baseName } = cleanOcrName(ocrName);
+    const cands = [cleaned, baseName].filter(c => c.length >= 2);
+    for (const cand of cands) {
+      nameSim = Math.max(
+        nameSim,
+        fuzzySimilarity(cand, match.name),
+        match.name_en ? fuzzySimilarity(cand, match.name_en) : 0,
+      );
     }
   }
 
-  return [...merged.values()]
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, topK);
+  let setMatch: CalibrationSignals['setMatch'] = 'unknown';
+  if (setHint && setHint.length >= 2) {
+    const setCode = match.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
+    const hint = setHint.toLowerCase();
+    if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
+      setMatch = 'exact';
+    } else {
+      const sname = match.set_name.toLowerCase();
+      setMatch = (sname && (sname.includes(hint) || hint.includes(sname))) ? 'partial' : 'mismatch';
+    }
+  }
+
+  let hpMatch: CalibrationSignals['hpMatch'] = 'unknown';
+  if (hpHint && match.hp) {
+    hpMatch = match.hp === hpHint ? 'match' : 'mismatch';
+  }
+
+  let supertypeMatch: CalibrationSignals['supertypeMatch'] = 'unknown';
+  if (supertypeHint) {
+    supertypeMatch = match.supertype === supertypeHint ? 'match' : 'mismatch';
+  }
+
+  return {
+    numberKnown,
+    numberExactMatch,
+    numberNearbyMatch,
+    nameKnown,
+    nameSim,
+    setMatch,
+    hpMatch,
+    supertypeMatch,
+    visualKnown: visualSim != null,
+    visualSim: visualSim ?? 0,
+    candidateCount,
+  };
 }
 
 // ── Main scan ────────────────────────────────────────────────────────────────
@@ -860,6 +994,18 @@ export async function supabaseScan(
   topK = 5,
   lang: ScanLanguage = 'en',
 ): Promise<ScanResult> {
+  // 0. Tight-crop the card out of the photo so OCR + embedding don't waste
+  //    resolution on background clutter. Falls back to the original blob if
+  //    detection isn't confident.
+  let scanBlob: File | Blob = imageFile;
+  try {
+    const crop = await detectAndCropCard(imageFile);
+    scanBlob = crop.blob;
+    if (crop.detected) scanLog('[scan] card detected — tight crop applied');
+  } catch (err) {
+    scanWarn('[scan] card detection failed, using original:', err);
+  }
+
   // 2. Try PaddleOCR first (cloud, high accuracy, auto-detect language)
   let cardNumber: string | null = null;
   let nameQuery = '';
@@ -873,7 +1019,7 @@ export async function supabaseScan(
   // Pass non-English user pick as a hint; otherwise let PaddleOCR auto-detect
   // (auto does best for mixed Latin cards and avoids locking EN cards to 'en').
   const paddleLang: ScanLanguage | 'auto' = lang === 'en' ? 'auto' : lang;
-  const paddleResult = await tryPaddleOcr(imageFile, paddleLang);
+  const paddleResult = await tryPaddleOcr(scanBlob, paddleLang);
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;
@@ -924,8 +1070,8 @@ export async function supabaseScan(
 
     try {
       [nameResult, numberResult] = await Promise.all([
-        ocrMultiPass(imageFile, 0.03, 0.18, 3, NAME_PROFILES, lang),
-        ocrMultiPass(imageFile, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
+        ocrMultiPass(scanBlob, 0.03, 0.18, 3, NAME_PROFILES, lang),
+        ocrMultiPass(scanBlob, 0.88, 0.97, 3, NUMBER_PROFILES, lang),
       ]);
     } catch (err) {
       scanWarn('[supabaseScan] Crop/OCR failed:', err);
@@ -986,7 +1132,7 @@ export async function supabaseScan(
   // Retry with wider bottom crop (bottom 25%) if nothing found yet — Tesseract only
   if (ocrMatches.length === 0 && !usedPaddle) {
     try {
-      const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, effectiveLang);
+      const wideBottom = await ocrMultiPass(scanBlob, 0.75, 1, 3, NUMBER_PROFILES, effectiveLang);
       const wideNumber = extractCardNumber(wideBottom.text);
       if (wideNumber) {
         ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, effectiveLang);
@@ -997,7 +1143,7 @@ export async function supabaseScan(
   // Last resort: full-image OCR — Tesseract only
   if (ocrMatches.length === 0 && !usedPaddle) {
     try {
-      const fullResult = await ocrMultiPass(imageFile, 0, 1, 1, NAME_PROFILES.slice(0, 1), effectiveLang);
+      const fullResult = await ocrMultiPass(scanBlob, 0, 1, 1, NAME_PROFILES.slice(0, 1), effectiveLang);
       const fullNumber = extractCardNumber(fullResult.text);
       const fullName = extractNameQuery(fullResult.text, effectiveLang);
       if (fullNumber) {
@@ -1009,16 +1155,53 @@ export async function supabaseScan(
     } catch { /* ignore */ }
   }
 
-  // 4. Only call the visual embed Space when OCR didn't nail it. Saves HF
-  //    quota and halves cold-start risk when OCR is confident.
-  const topOcrConfidence = ocrMatches[0]?.confidence ?? 0;
-  const visualMatches: ScanMatch[] = topOcrConfidence >= 0.90
-    ? []
-    : await tryVisualMatch(imageFile, topK, effectiveLang).catch(() => [] as ScanMatch[]);
+  // 4. Always run the visual-embedding reranker. Visual is strongest exactly
+  //    where OCR is weakest (foils, full-art, promo, stylized fonts), so
+  //    letting it tie-break against OCR results always lifts accuracy.
+  //    HF Space is free, so cost is not a concern here. Pull a wider pool
+  //    (topK * 3) so the calibrator has room to promote an embedding-only
+  //    winner past weak OCR matches.
+  const visualMatches = await tryVisualMatch(scanBlob, topK * 3, effectiveLang)
+    .catch(() => [] as ScanMatch[]);
 
-  const matches = visualMatches.length > 0
-    ? mergeResults(ocrMatches, visualMatches, topK)
-    : ocrMatches;
+  // Capture raw visual similarities before any merging mutates them.
+  const visualSimMap = new Map<string, number>();
+  for (const v of visualMatches) visualSimMap.set(v.id, v.confidence);
+
+  // Merge OCR + visual candidates, deduplicating by card id. Prefer the OCR
+  // entry when both sides agree (its `method` field will be promoted below).
+  const mergedMap = new Map<string, ScanMatch>();
+  for (const m of ocrMatches) mergedMap.set(m.id, { ...m });
+  for (const v of visualMatches) {
+    if (!mergedMap.has(v.id)) mergedMap.set(v.id, { ...v });
+  }
+  const merged = [...mergedMap.values()];
+
+  // 5. Calibrated confidence pass — replace each candidate's ad-hoc confidence
+  //    with a log-odds blend of all independent signals (number, name, visual,
+  //    set, HP, supertype, candidate count). This produces honest scores where
+  //    the top result's confidence actually reflects total evidence instead of
+  //    whichever constant a single search strategy happened to stamp on it.
+  for (const m of merged) {
+    const visualSim = visualSimMap.has(m.id) ? (visualSimMap.get(m.id) ?? null) : null;
+    const signals = computeSignals(
+      m,
+      cardNumber,
+      nameQuery,
+      setHint,
+      hpHint,
+      supertypeHint,
+      visualSim,
+      merged.length,
+    );
+    m.confidence = calibrateConfidence(signals);
+    if (visualSim != null && ocrMatches.some(o => o.id === m.id)) {
+      m.method = 'ocr+visual';
+    }
+  }
+
+  merged.sort((a, b) => b.confidence - a.confidence);
+  const matches = merged.slice(0, topK);
 
   // Enrich non-English matches with English names
   if (effectiveLang !== 'en' && matches.length > 0) {
