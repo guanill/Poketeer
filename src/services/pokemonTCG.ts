@@ -4,6 +4,13 @@ import { catalogService } from './catalogService';
 import { visualMatchService } from './visualMatchService';
 import { supabase } from '../lib/supabase';
 
+export interface PriceDetails {
+  market: number | null;
+  low: number | null;
+  high: number | null;
+  tcgplayerUrl: string | null;
+}
+
 // Pre-load catalog + visual model on native so first scan is fast
 if (isNativePlatform()) {
   catalogService.prewarm();
@@ -290,6 +297,22 @@ export const pokemonTCGService = {
       result[row.card_id] = row.market_price;
     }
     return result;
+  },
+
+  async getPriceDetails(cardId: string): Promise<PriceDetails | null> {
+    if (isNativePlatform()) return null;
+    const { data, error } = await supabase
+      .from('prices_cache')
+      .select('market_price, low_price, high_price, tcgplayer_url')
+      .eq('card_id', cardId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      market: data.market_price,
+      low: data.low_price,
+      high: data.high_price,
+      tcgplayerUrl: data.tcgplayer_url,
+    };
   },
 
   async getCardsByIds(cardIds: string[]): Promise<PokemonCard[]> {

@@ -61,10 +61,10 @@ export function SetDetail() {
     staleTime: 1000 * 60 * 10,
   });
 
-  // Fetch price for the currently selected card
-  const { data: selectedCardPrices } = useQuery({
-    queryKey: ['prices', selectedCard?.id ?? ''],
-    queryFn: () => pokemonTCGService.getPrices([selectedCard!.id]),
+  // Fetch rich pricing (market + range + TCGPlayer link) for the selected card
+  const { data: selectedCardPriceDetails } = useQuery({
+    queryKey: ['price-details', selectedCard?.id ?? ''],
+    queryFn: () => pokemonTCGService.getPriceDetails(selectedCard!.id),
     enabled: !!selectedCard,
     staleTime: 1000 * 60 * 60,
   });
@@ -366,7 +366,7 @@ export function SetDetail() {
       <CardDetailModal
         card={selectedCard}
         onClose={() => setSelectedCard(null)}
-        marketPrice={selectedCard && selectedCardPrices ? (selectedCardPrices[selectedCard.id] ?? null) : null}
+        priceDetails={selectedCardPriceDetails ?? null}
       />
     </div>
     </LayoutGroup>

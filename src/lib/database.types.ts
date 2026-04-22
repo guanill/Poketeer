@@ -135,19 +135,28 @@ export type Database = {
         Row: {
           card_id: string
           failed: boolean
+          high_price: number | null
+          low_price: number | null
           market_price: number | null
+          tcgplayer_url: string | null
           updated_at: string
         }
         Insert: {
           card_id: string
           failed?: boolean
+          high_price?: number | null
+          low_price?: number | null
           market_price?: number | null
+          tcgplayer_url?: string | null
           updated_at?: string
         }
         Update: {
           card_id?: string
           failed?: boolean
+          high_price?: number | null
+          low_price?: number | null
           market_price?: number | null
+          tcgplayer_url?: string | null
           updated_at?: string
         }
         Relationships: [

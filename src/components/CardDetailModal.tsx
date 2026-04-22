@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check, ZoomIn } from 'lucide-react';
 import type { PokemonCard, CardCondition, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
-import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
+import { getCardMarketPrice, getRarityColor, getAvailableVariants, type PriceDetails } from '../services/pokemonTCG';
 import { ImageZoom } from './ImageZoom';
 
 const VARIANT_META: Record<CardVariant, { label: string; color: string; bg: string }> = {
@@ -16,12 +16,12 @@ const VARIANT_META: Record<CardVariant, { label: string; color: string; bg: stri
 interface CardDetailModalProps {
   card: PokemonCard | null;
   onClose: () => void;
-  marketPrice?: number | null;
+  priceDetails?: PriceDetails | null;
 }
 
 const CONDITIONS: CardCondition[] = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Light Play', 'Played', 'Poor'];
 
-export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }: CardDetailModalProps) {
+export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModalProps) {
   const [pricePaid, setPricePaid] = useState('');
   const [condition, setCondition] = useState<CardCondition>('Near Mint');
   const [notes, setNotes] = useState('');
@@ -43,7 +43,10 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
 
   if (!card) return null;
 
-  const marketPrice = marketPriceProp ?? getCardMarketPrice(card) ?? customPrices[card.id] ?? null;
+  const marketPrice = priceDetails?.market ?? getCardMarketPrice(card) ?? customPrices[card.id] ?? null;
+  const priceLow = priceDetails?.low ?? null;
+  const priceHigh = priceDetails?.high ?? null;
+  const tcgplayerUrl = priceDetails?.tcgplayerUrl ?? card.tcgplayer?.url ?? null;
 
   const handleSaveManualPrice = () => {
     const val = parseFloat(manualPriceInput);
@@ -219,14 +222,32 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                   style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02))' }}
                 >
                   {marketPrice ? (
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Market Price</p>
-                        <p className="text-2xl font-black text-green-400 mt-0.5">${marketPrice.toFixed(2)}</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Market Price</p>
+                          <p className="text-2xl font-black text-green-400 mt-0.5">${marketPrice.toFixed(2)}</p>
+                          {priceLow != null && priceHigh != null && priceHigh > priceLow && (
+                            <p className="text-[11px] text-gray-500 mt-0.5">
+                              ${priceLow.toFixed(2)} – ${priceHigh.toFixed(2)}
+                            </p>
+                          )}
+                        </div>
+                        <div className="w-9 h-9 rounded-xl bg-green-500/15 flex items-center justify-center">
+                          <DollarSign size={18} className="text-green-400" />
+                        </div>
                       </div>
-                      <div className="w-9 h-9 rounded-xl bg-green-500/15 flex items-center justify-center">
-                        <DollarSign size={18} className="text-green-400" />
-                      </div>
+                      {tcgplayerUrl && (
+                        <a
+                          href={tcgplayerUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-green-400 hover:text-green-300 bg-green-500/10 hover:bg-green-500/15 border border-green-500/20 rounded-lg py-1.5 transition-colors"
+                        >
+                          View on TCGPlayer
+                          <ExternalLink size={11} />
+                        </a>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -438,18 +459,6 @@ export function CardDetailModal({ card, onClose, marketPrice: marketPriceProp }:
                 <Heart size={16} fill={inWishlist ? 'currentColor' : 'none'} />
                 {inWishlist ? 'Remove from Wishlist' : 'Add to Wishlist'}
               </motion.button>
-
-              {card.tcgplayer?.url && (
-                <a
-                  href={card.tcgplayer.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 w-full py-2 rounded-xl text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center justify-center gap-1"
-                >
-                  <ExternalLink size={12} />
-                  View on TCGPlayer
-                </a>
-              )}
             </motion.div>
           </div>
         </motion.div>

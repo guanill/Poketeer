@@ -82,13 +82,20 @@ def get_set_ids() -> list[str]:
     return sorted(all_ids)
 
 
-def fetch_prices_for_set(set_id: str) -> dict[str, float | None]:
-    """Fetch all card prices for a set from pokemontcg.io."""
+def fetch_prices_for_set(set_id: str) -> dict[str, dict]:
+    """Fetch all card prices for a set from pokemontcg.io.
+
+    Returns a dict keyed by card_id with {market, low, high, url}.
+    `market` is the first available variant's market price. `low`/`high` are
+    the min/max across every numeric field we can see (market, low, mid,
+    high, directLow) across every variant, giving an honest "what can this
+    sell for" band. `url` is the TCGPlayer listing page.
+    """
     headers = {}
     if TCG_API_KEY:
         headers["X-Api-Key"] = TCG_API_KEY
 
-    prices: dict[str, float | None] = {}
+    out: dict[str, dict] = {}
     page = 1
     page_size = 250
 
@@ -111,7 +118,7 @@ def fetch_prices_for_set(set_id: str) -> dict[str, float | None]:
                 if attempt < 2:
                     time.sleep(5)
                 else:
-                    return prices
+                    return out
 
         if resp.status_code == 429:
             print("    Rate limited, waiting 60s...")
@@ -135,13 +142,31 @@ def fetch_prices_for_set(set_id: str) -> dict[str, float | None]:
                 or (p.get("reverseHolofoil") or {}).get("market")
                 or (p.get("1stEditionHolofoil") or {}).get("market")
             )
-            prices[card_id] = market
+
+            all_values: list[float] = []
+            for variant_prices in p.values():
+                if not isinstance(variant_prices, dict):
+                    continue
+                for k in ("low", "mid", "high", "market", "directLow"):
+                    v = variant_prices.get(k)
+                    if isinstance(v, (int, float)) and v > 0:
+                        all_values.append(float(v))
+
+            low = min(all_values) if all_values else None
+            high = max(all_values) if all_values else None
+
+            out[card_id] = {
+                "market": market,
+                "low": low,
+                "high": high,
+                "url": tcg.get("url"),
+            }
 
         if len(cards) < page_size:
             break
         page += 1
 
-    return prices
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +190,14 @@ def main():
         print(f"  [{i+1}/{len(set_ids)}] {set_id}...", end=" ")
         prices = fetch_prices_for_set(set_id)
         count = 0
-        for card_id, market_price in prices.items():
+        for card_id, info in prices.items():
+            market_price = info.get("market")
             all_rows.append({
                 "card_id": card_id,
                 "market_price": market_price,
+                "low_price": info.get("low"),
+                "high_price": info.get("high"),
+                "tcgplayer_url": info.get("url"),
                 "failed": market_price is None,
             })
             if market_price is not None:
