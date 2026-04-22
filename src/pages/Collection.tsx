@@ -40,6 +40,13 @@ export function Collection() {
     staleTime: 1000 * 60 * 60,
   });
 
+  const { data: selectedCardPriceDetails } = useQuery({
+    queryKey: ['price-details', selectedCard?.id ?? ''],
+    queryFn: () => pokemonTCGService.getPriceDetails(selectedCard!.id),
+    enabled: !!selectedCard,
+    staleTime: 1000 * 60 * 60,
+  });
+
   const getPrice = (cardId: string): number | null => prices[cardId] ?? customPrices[cardId] ?? null;
 
   // Extract types from owned cards
@@ -372,7 +379,7 @@ export function Collection() {
       <CardDetailModal
         card={selectedCard}
         onClose={() => setSelectedCard(null)}
-        marketPrice={selectedCard ? getPrice(selectedCard.id) : null}
+        priceDetails={selectedCardPriceDetails ?? null}
       />
     </div>
     </LayoutGroup>
