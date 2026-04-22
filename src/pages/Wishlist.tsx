@@ -292,17 +292,7 @@ export function Wishlist() {
             {sortedWishlist.map(item => {
               const card = cardMap[item.cardId];
               if (!card) return null;
-              return (
-                <div key={item.cardId} className="relative">
-                  <CardItem card={card} onViewDetails={setSelectedCard} />
-                  {/* Priority dot */}
-                  <div
-                    className="absolute top-2 left-7 z-30 w-2 h-2 rounded-full"
-                    style={{ background: PRIORITY_COLORS[item.priority], boxShadow: `0 0 6px ${PRIORITY_COLORS[item.priority]}` }}
-                    title={`${item.priority} priority`}
-                  />
-                </div>
-              );
+              return <CardItem key={item.cardId} card={card} onViewDetails={setSelectedCard} />;
             })}
           </motion.div>
         </AnimatePresence>
