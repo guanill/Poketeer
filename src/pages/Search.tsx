@@ -97,7 +97,7 @@ export function Search() {
     return cards;
   }, [allCards, sortBy, typeFilter]);
 
-  // Infinite scroll observer
+  // Infinite scroll observer (still wired up as a fallback)
   const handleObserver = useCallback(
     (entries: IntersectionObserverEntry[]) => {
       const target = entries[0];
@@ -115,6 +115,13 @@ export function Search() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [handleObserver]);
+
+  // Auto-fetch remaining pages so the user sees every match without scrolling.
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Build result count text
   const resultText = (() => {

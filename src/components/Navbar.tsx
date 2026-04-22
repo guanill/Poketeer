@@ -72,9 +72,10 @@ const navItems = [
   { to: '/search', icon: Search, label: 'Search' },
 ];
 
-// Mobile bottom bar splits around the central FAB
-const mobileLeft  = navItems.slice(0, 3); // Dashboard, Sets, Collection
-const mobileRight = navItems.slice(3);    // Wishlist, Search
+// Mobile bottom bar splits around the central FAB — 2|FAB|3 keeps the FAB
+// visually centered with 5 tabs (3|FAB|2 would push it 8% to the right).
+const mobileLeft  = navItems.slice(0, 2); // Dashboard, Sets
+const mobileRight = navItems.slice(2);    // Collection, Wishlist, Search
 
 function UserMenu() {
   const { user, signInWithGoogle, signInWithEmail, signUp, signOut, resetPassword, loading } = useAuth();
