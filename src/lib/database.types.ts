@@ -160,66 +160,6 @@ export type Database = {
           },
         ]
       }
-      scan_feedback: {
-        Row: {
-          candidate_count: number
-          created_at: string
-          id: string
-          ocr_language: string
-          ocr_text: string
-          outcome: string
-          scan_method: string
-          top_match_card_id: string | null
-          top_match_confidence: number | null
-          user_final_card_id: string | null
-          user_id: string | null
-          was_top_correct: boolean | null
-        }
-        Insert: {
-          candidate_count?: number
-          created_at?: string
-          id?: string
-          ocr_language?: string
-          ocr_text?: string
-          outcome: string
-          scan_method?: string
-          top_match_card_id?: string | null
-          top_match_confidence?: number | null
-          user_final_card_id?: string | null
-          user_id?: string | null
-          was_top_correct?: boolean | null
-        }
-        Update: {
-          candidate_count?: number
-          created_at?: string
-          id?: string
-          ocr_language?: string
-          ocr_text?: string
-          outcome?: string
-          scan_method?: string
-          top_match_card_id?: string | null
-          top_match_confidence?: number | null
-          user_final_card_id?: string | null
-          user_id?: string | null
-          was_top_correct?: boolean | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "scan_feedback_top_match_card_id_fkey"
-            columns: ["top_match_card_id"]
-            isOneToOne: false
-            referencedRelation: "cards"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "scan_feedback_user_final_card_id_fkey"
-            columns: ["user_final_card_id"]
-            isOneToOne: false
-            referencedRelation: "cards"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       sets: {
         Row: {
           id: string
