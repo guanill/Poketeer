@@ -13,8 +13,6 @@ import { useScanStore } from '../store/scanStore';
 import type { ScanJob } from '../store/scanStore';
 import { isNativePlatform } from '../utils/platform';
 import { setBackendUrl, getBackendUrl } from '../services/nativeScanService';
-import { analyseFrameQuality, type FrameQuality } from '../utils/frameQuality';
-import { logScanFeedback } from '../services/scanFeedback';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -53,23 +51,11 @@ function MethodPill({ method }: { method: ScanMatch['method'] }) {
   );
 }
 
-function MatchRow({
-  match, rank, isTop, onAdd,
-}: {
-  match: ScanMatch;
-  rank: number;
-  isTop: boolean;
-  onAdd?: (match: ScanMatch, rank: number) => void;
-}) {
+function MatchRow({ match, rank, isTop }: { match: ScanMatch; rank: number; isTop: boolean }) {
   const owned   = useCollectionStore(s => s.owned);
   const addCard = useCollectionStore(s => s.addCard);
   const removeCard = useCollectionStore(s => s.removeCard);
   const isOwned = (owned[match.id]?.quantity ?? 0) > 0;
-
-  const handleAdd = () => {
-    addCard(match.id);
-    onAdd?.(match, rank);
-  };
 
   return (
     <motion.div
@@ -120,7 +106,7 @@ function MatchRow({
             </button>
           ) : (
             <button
-              onClick={handleAdd}
+              onClick={() => addCard(match.id)}
               className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full bg-amber-400/10 text-amber-400 border border-amber-400/25 hover:bg-amber-400/20 transition-colors shrink-0"
             >
               <Plus size={11} />
@@ -164,22 +150,6 @@ function JobCard({
   }, []);
 
   const displayMatches = manualMatches ?? job.matches;
-
-  const handleAddFromList = useCallback((match: ScanMatch, rank: number) => {
-    logScanFeedback({
-      job,
-      outcome: rank === 0 ? 'add_top' : 'add_other',
-      userFinalCardId: match.id,
-    });
-  }, [job]);
-
-  const handleAddFromManual = useCallback((match: ScanMatch) => {
-    logScanFeedback({
-      job,
-      outcome: 'search_manual',
-      userFinalCardId: match.id,
-    });
-  }, [job]);
 
   return (
     <motion.div
@@ -325,12 +295,7 @@ function JobCard({
             </button>
           )}
           <button
-            onClick={() => {
-              if (job.status === 'done') {
-                logScanFeedback({ job, outcome: 'dismiss', userFinalCardId: null });
-              }
-              onDismiss(job.id);
-            }}
+            onClick={() => onDismiss(job.id)}
             className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
           >
             <X size={13} />
@@ -380,7 +345,7 @@ function JobCard({
               {manualMatches && manualMatches.length > 0 && (
                 <div className="space-y-2">
                   {manualMatches.map((m, i) => (
-                    <MatchRow key={m.id} match={m} rank={i} isTop={i === 0} onAdd={handleAddFromManual} />
+                    <MatchRow key={m.id} match={m} rank={i} isTop={i === 0} />
                   ))}
                 </div>
               )}
@@ -401,13 +366,7 @@ function JobCard({
           >
             <div className="px-3 pb-3 space-y-2 border-t border-white/5 pt-3">
               {displayMatches.map((m, i) => (
-                <MatchRow
-                  key={m.id}
-                  match={m}
-                  rank={i}
-                  isTop={i === 0}
-                  onAdd={manualMatches ? handleAddFromManual : handleAddFromList}
-                />
+                <MatchRow key={m.id} match={m} rank={i} isTop={i === 0} />
               ))}
             </div>
           </motion.div>
@@ -447,7 +406,6 @@ export function CardScanner() {
   const stableFrameCountRef = useRef(0);
   const shotFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoScanEnabled, setAutoScanEnabled] = useState(true);
-  const [frameQuality, setFrameQuality] = useState<FrameQuality | null>(null);
 
   const [isMobile] = useState(() =>
     typeof window !== 'undefined' &&
@@ -687,13 +645,7 @@ export function CardScanner() {
       // Card detected: decent edge contrast AND center has texture/detail
       const hasCard = contrast > 15 && variance > 400;
 
-      // Quality pass — surface glare / blur / brightness issues live and
-      // block auto-capture on bad frames so we don't burn an HF call on a
-      // photo we'd reject anyway.
-      const quality = analyseFrameQuality(data, w, h);
-      setFrameQuality(quality);
-
-      if (hasCard && quality.ok) {
+      if (hasCard) {
         stableFrameCountRef.current++;
         // 3 consecutive detections (~1.8s) → auto-scan
         if (stableFrameCountRef.current >= 3) {
@@ -761,7 +713,6 @@ export function CardScanner() {
       const topMatch = job.matches[0];
       if (!(currentOwned[topMatch.id]?.quantity > 0)) {
         batchAddCard(topMatch.id);
-        logScanFeedback({ job, outcome: 'add_top', userFinalCardId: topMatch.id });
         count++;
       }
     }
@@ -913,26 +864,6 @@ export function CardScanner() {
                   <Scan size={10} />
                   Auto
                 </button>
-
-                {/* Live quality chips — only render when there's a problem */}
-                {autoScanEnabled && frameQuality && !frameQuality.ok && (
-                  <div className="absolute top-3 inset-x-0 flex justify-center pointer-events-none">
-                    <div className="flex gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-sm border border-white/10">
-                      {frameQuality.tooDark && (
-                        <span className="text-[10px] font-bold text-amber-300">Too dark</span>
-                      )}
-                      {frameQuality.tooBright && (
-                        <span className="text-[10px] font-bold text-amber-300">Too bright</span>
-                      )}
-                      {frameQuality.hasGlare && (
-                        <span className="text-[10px] font-bold text-red-300">Glare</span>
-                      )}
-                      {frameQuality.tooBlurry && (
-                        <span className="text-[10px] font-bold text-red-300">Blurry</span>
-                      )}
-                    </div>
-                  </div>
-                )}
 
                 {/* Capture button */}
                 <div className="absolute bottom-4 inset-x-0 flex justify-center">
