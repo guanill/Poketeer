@@ -82,6 +82,29 @@ def get_set_ids() -> list[str]:
     return sorted(all_ids)
 
 
+def get_known_card_ids() -> set[str]:
+    """Fetch every card id we have locally so we can skip FK violations."""
+    print("Fetching known card IDs from Supabase...")
+    ids: set[str] = set()
+    page_size = 1000
+    offset = 0
+    while True:
+        res = (
+            sb.table("cards")
+            .select("id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        if not res.data:
+            break
+        ids.update(row["id"] for row in res.data)
+        if len(res.data) < page_size:
+            break
+        offset += page_size
+    print(f"  Found {len(ids)} cards")
+    return ids
+
+
 def fetch_prices_for_set(set_id: str) -> dict[str, dict]:
     """Fetch all card prices for a set from pokemontcg.io.
 
@@ -181,16 +204,22 @@ def main():
     start = time.time()
 
     set_ids = get_set_ids()
+    known_card_ids = get_known_card_ids()
     print(f"\nFetching prices for {len(set_ids)} sets...\n")
 
     all_rows: list[dict] = []
     priced = 0
+    skipped_unknown = 0
 
     for i, set_id in enumerate(set_ids):
         print(f"  [{i+1}/{len(set_ids)}] {set_id}...", end=" ")
         prices = fetch_prices_for_set(set_id)
         count = 0
+        skipped = 0
         for card_id, info in prices.items():
+            if card_id not in known_card_ids:
+                skipped += 1
+                continue
             market_price = info.get("market")
             all_rows.append({
                 "card_id": card_id,
@@ -203,13 +232,15 @@ def main():
             if market_price is not None:
                 count += 1
         priced += count
-        print(f"{count}/{len(prices)} priced")
+        skipped_unknown += skipped
+        suffix = f" ({skipped} unknown)" if skipped else ""
+        print(f"{count}/{len(prices) - skipped} priced{suffix}")
 
         # Small delay to avoid rate limits (no key = ~1000 req/day)
         if not TCG_API_KEY:
             time.sleep(1)
 
-    print(f"\nTotal: {priced} cards with prices, {len(all_rows)} total entries")
+    print(f"\nTotal: {priced} cards with prices, {len(all_rows)} total entries, {skipped_unknown} skipped (not in cards table)")
 
     if all_rows:
         print("\nUpserting to prices_cache...")
