@@ -125,6 +125,10 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
               layoutId={`card-img-${card.id}`}
               src={card.images.small}
               alt={card.name}
+              loading="lazy"
+              decoding="async"
+              width={245}
+              height={342}
               className={`w-full h-full object-contain rounded-lg transition-opacity ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
               onLoad={() => setImageLoaded(true)}
               onError={() => setImageLoaded(true)}

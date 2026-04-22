@@ -331,7 +331,7 @@ export function Collection() {
             <div key={group.name}>
               <div className="flex items-center gap-3 mb-3">
                 {group.logo && (
-                  <img src={group.logo} alt={group.name} className="h-6 object-contain" />
+                  <img src={group.logo} alt={group.name} loading="lazy" decoding="async" className="h-6 object-contain" />
                 )}
                 <h3 className="text-sm font-bold text-gray-400">{group.name}</h3>
                 <span className="text-xs text-gray-600">{group.cards.length} cards</span>

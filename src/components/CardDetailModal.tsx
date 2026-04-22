@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check, ZoomIn } from 'lucide-react';
 import type { PokemonCard, CardCondition, CardVariant } from '../types';
@@ -29,6 +29,7 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
   const [addQty, setAddQty] = useState(1);
   const [addedFlash, setAddedFlash] = useState(0);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [hiResLoaded, setHiResLoaded] = useState(false);
 
   const owned = useCollectionStore(s => card ? s.owned[card.id] : undefined);
   const inWishlist = useCollectionStore(s => card ? s.isInWishlist(card.id) : false);
@@ -40,6 +41,10 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
   const addToWishlist = useCollectionStore(s => s.addToWishlist);
   const removeFromWishlist = useCollectionStore(s => s.removeFromWishlist);
   const setCustomPriceStore = useCollectionStore(s => s.setCustomPrice);
+
+  useEffect(() => {
+    setHiResLoaded(false);
+  }, [card?.id]);
 
   if (!card) return null;
 
@@ -126,18 +131,31 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
                     <div className="relative group/img">
                       <motion.img
                         layoutId={`card-img-${card.id}`}
-                        src={card.images.large || card.images.small}
+                        src={card.images.small || card.images.large}
                         alt={card.name}
                         onClick={() => setZoomOpen(true)}
+                        decoding="async"
                         className="w-36 sm:w-44 rounded-xl cursor-zoom-in"
                         style={{ boxShadow: `0 20px 40px ${rarityColor}40` }}
                         transition={{ type: 'spring', stiffness: 200, damping: 28 }}
                       />
+                      {card.images.large && card.images.large !== card.images.small && (
+                        <img
+                          key={card.id}
+                          src={card.images.large}
+                          alt=""
+                          aria-hidden="true"
+                          decoding="async"
+                          fetchPriority="high"
+                          onLoad={() => setHiResLoaded(true)}
+                          className={`absolute inset-0 w-full h-full rounded-xl pointer-events-none transition-opacity duration-300 ${hiResLoaded ? 'opacity-100' : 'opacity-0'}`}
+                        />
+                      )}
                       <button
                         type="button"
                         onClick={() => setZoomOpen(true)}
                         aria-label="Zoom image"
-                        className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-sm"
+                        className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover/img:opacity-100 transition-opacity backdrop-blur-sm z-10"
                       >
                         <ZoomIn size={14} />
                       </button>

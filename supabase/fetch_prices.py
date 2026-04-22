@@ -159,12 +159,24 @@ def fetch_prices_for_set(set_id: str) -> dict[str, dict]:
             card_id = card["id"]
             tcg = card.get("tcgplayer", {})
             p = tcg.get("prices", {})
-            market = (
-                (p.get("holofoil") or {}).get("market")
-                or (p.get("normal") or {}).get("market")
-                or (p.get("reverseHolofoil") or {}).get("market")
-                or (p.get("1stEditionHolofoil") or {}).get("market")
-            )
+            # Prefer the most common variants; fall back to *any* variant
+            # that has a market price so we don't leave cards as null just
+            # because they only print as e.g. unlimitedHolofoil / firstEdition.
+            PREFERRED = ("holofoil", "normal", "reverseHolofoil", "1stEditionHolofoil")
+            market = None
+            for v in PREFERRED:
+                m = (p.get(v) or {}).get("market")
+                if isinstance(m, (int, float)) and m > 0:
+                    market = float(m)
+                    break
+            if market is None:
+                for variant_prices in p.values():
+                    if not isinstance(variant_prices, dict):
+                        continue
+                    m = variant_prices.get("market")
+                    if isinstance(m, (int, float)) and m > 0:
+                        market = float(m)
+                        break
 
             all_values: list[float] = []
             for variant_prices in p.values():

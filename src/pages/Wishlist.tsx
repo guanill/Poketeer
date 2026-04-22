@@ -335,6 +335,8 @@ export function Wishlist() {
                     <img
                       src={card.images.small}
                       alt={card.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-10 h-14 object-contain rounded-lg cursor-pointer hover:scale-110 transition-transform shrink-0"
                       onClick={() => setSelectedCard(card)}
                     />

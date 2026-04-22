@@ -492,7 +492,7 @@ export function Dashboard() {
                                   }}
                                 />
                               ) : set.images.symbol ? (
-                                <img src={set.images.symbol} alt={set.name} className="w-6 h-6 object-contain" />
+                                <img src={set.images.symbol} alt={set.name} loading="lazy" decoding="async" className="w-6 h-6 object-contain" />
                               ) : null}
                             </div>
                             <div className="flex-1 min-w-0">
