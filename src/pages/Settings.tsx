@@ -31,11 +31,8 @@ export function Settings() {
 
       {/* Language Sets */}
       <div
-        className="rounded-2xl p-5 space-y-4"
-        style={{
-          background: 'linear-gradient(145deg, #13132a, #0f0f22)',
-          border: '1px solid rgba(139,92,246,0.15)',
-        }}
+        className="surface-sunken rounded-2xl p-5 space-y-4"
+        style={{ border: '1px solid rgba(139,92,246,0.15)' }}
       >
         <div className="flex items-center gap-2.5 mb-1">
           <Globe size={16} className="text-violet-400" />

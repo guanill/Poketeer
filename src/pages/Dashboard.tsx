@@ -7,9 +7,11 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { pokemonTCGService, getRarityColor } from '../services/pokemonTCG';
+import { useCardsByIds, usePricesByIds } from '../hooks/useCardsByIds';
 import { useCollectionStore } from '../store/collectionStore';
 import { StatCard } from '../components/StatCard';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { QueryErrorState } from '../components/QueryErrorState';
 import { TYPE_COLORS } from '../utils/cardConstants';
 
 export function Dashboard() {
@@ -22,7 +24,7 @@ export function Dashboard() {
   const cardIds = Object.keys(owned);
 
   // Single query for all languages
-  const { data: sets, isLoading } = useQuery({
+  const { data: sets, isLoading, isError, refetch } = useQuery({
     queryKey: ['sets', 'v2', 'all'],
     queryFn: () => pokemonTCGService.getAllSets(),
     staleTime: 1000 * 60 * 60,
@@ -40,20 +42,10 @@ export function Dashboard() {
   }, [sets]);
 
   // Prices for portfolio value
-  const { data: prices = {} } = useQuery({
-    queryKey: ['dashboard-prices', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getPrices(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 60,
-  });
+  const { data: prices = {} } = usePricesByIds(cardIds);
 
   // Card details for insights
-  const { data: ownedCards } = useQuery({
-    queryKey: ['dashboard-owned-cards', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getCardsByIds(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 10,
-  });
+  const { data: ownedCards } = useCardsByIds(cardIds);
 
   // Owned cards grouped by set ID
   const ownedBySet = useMemo(() => {
@@ -259,8 +251,7 @@ export function Dashboard() {
               <motion.button
                 whileHover={{ scale: 1.04, boxShadow: '0 0 20px rgba(255,203,5,0.4)' }}
                 whileTap={{ scale: 0.97 }}
-                className="mt-4 px-6 py-3 rounded-xl font-black text-black text-sm flex items-center gap-2"
-                style={{ background: 'linear-gradient(135deg, #F59E0B, #d97706)' }}
+                className="btn-gradient-amber mt-4 px-6 py-3 rounded-xl font-black text-black text-sm flex items-center gap-2"
               >
                 <Layers size={16} />
                 Browse All Sets
@@ -328,11 +319,8 @@ export function Dashboard() {
           {/* Rarity Breakdown */}
           {rarityDistribution.length > 0 && (
             <div
-              className="p-4 rounded-2xl space-y-3"
-              style={{
-                background: 'linear-gradient(145deg, #1c1c38, #12122a)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
+              className="surface-raised p-4 rounded-2xl space-y-3"
+              style={{ border: '1px solid rgba(255,255,255,0.05)' }}
             >
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <BarChart3 size={14} className="text-amber-400" />
@@ -365,11 +353,8 @@ export function Dashboard() {
           {/* Type Breakdown */}
           {typeDistribution.length > 0 && (
             <div
-              className="p-4 rounded-2xl space-y-3"
-              style={{
-                background: 'linear-gradient(145deg, #1c1c38, #12122a)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
+              className="surface-raised p-4 rounded-2xl space-y-3"
+              style={{ border: '1px solid rgba(255,255,255,0.05)' }}
             >
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <BarChart3 size={14} className="text-amber-400" />
@@ -413,7 +398,14 @@ export function Dashboard() {
           </Link>
         </div>
 
-        {isLoading ? (
+        {isError ? (
+          <QueryErrorState
+            compact
+            title="Couldn't load sets"
+            message="Progress data is temporarily unavailable."
+            onRetry={() => refetch()}
+          />
+        ) : isLoading ? (
           <LoadingSkeleton count={3} type="set" />
         ) : setProgressByLang.every(g => g.items.length === 0) ? (
           <motion.div
@@ -467,9 +459,8 @@ export function Dashboard() {
                       >
                         <Link to={`/sets/${set.id}${lang !== 'en' ? `?lang=${lang}` : ''}`}>
                           <div
-                            className="p-3 rounded-xl flex items-center gap-3 cursor-pointer transition-all hover:bg-white/4"
+                            className="surface-raised p-3 rounded-xl flex items-center gap-3 cursor-pointer transition-all hover:bg-white/4"
                             style={{
-                              background: 'linear-gradient(145deg, #1c1c38, #12122a)',
                               border: progress === 100 ? '1px solid rgba(255,203,5,0.25)' : '1px solid rgba(255,255,255,0.05)',
                             }}
                           >
@@ -544,9 +535,8 @@ export function Dashboard() {
             <Link key={i} to={tip.link}>
               <motion.div
                 whileHover={{ y: -5, scale: 1.03 }}
-                className="p-5 rounded-2xl cursor-pointer h-full relative overflow-hidden"
+                className="surface-raised p-5 rounded-2xl cursor-pointer h-full relative overflow-hidden"
                 style={{
-                  background: 'linear-gradient(145deg, #1c1c38, #12122a)',
                   border: `1px solid ${tip.color}28`,
                   boxShadow: `0 4px 20px ${tip.color}10`,
                 }}

@@ -7,6 +7,7 @@ import { pokemonTCGService } from '../services/pokemonTCG';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { QueryErrorState } from '../components/QueryErrorState';
 import { ProgressRing } from '../components/ProgressRing';
 import { useCollectionStore } from '../store/collectionStore';
 import { getCardMarketPrice } from '../services/pokemonTCG';
@@ -42,7 +43,7 @@ export function SetDetail() {
   });
 
   // Paginated query — used for "All" view
-  const { data: cardsData, isLoading: loadingPage } = useQuery({
+  const { data: cardsData, isLoading: loadingPage, isError: errorPage, refetch: refetchPage } = useQuery({
     queryKey: ['cards', setId, page, lang],
     queryFn: () => isIntl
       ? pokemonTCGService.getIntlCardsBySet(lang as 'ja' | 'th', setId!, page, PAGE_SIZE)
@@ -52,7 +53,7 @@ export function SetDetail() {
   });
 
   // Full-set query — fetches every card once, used when a filter is active
-  const { data: allCardsData, isLoading: loadingAll } = useQuery({
+  const { data: allCardsData, isLoading: loadingAll, isError: errorAll, refetch: refetchAll } = useQuery({
     queryKey: ['cards-all', setId, lang],
     queryFn: () => isIntl
       ? pokemonTCGService.getIntlCardsBySet(lang as 'ja' | 'th', setId!, 1, 500)
@@ -73,6 +74,8 @@ export function SetDetail() {
   const needsAllCards = filterOwned !== 'all' || hasActiveFilters;
 
   const isLoading = needsAllCards ? loadingAll : loadingPage;
+  const isError = needsAllCards ? errorAll : errorPage;
+  const retry = () => { if (needsAllCards) refetchAll(); else refetchPage(); };
   const totalCards = cardsData?.totalCount ?? 0;
 
   const ownedInSet = useMemo(() => {
@@ -298,7 +301,13 @@ export function SetDetail() {
       )}
 
       {/* Card Grid */}
-      {isLoading ? (
+      {isError ? (
+        <QueryErrorState
+          title="Couldn't load cards"
+          message="The set's cards couldn't be fetched."
+          onRetry={retry}
+        />
+      ) : isLoading ? (
         <LoadingSkeleton count={24} type="card" />
       ) : (
         <AnimatePresence mode="popLayout">

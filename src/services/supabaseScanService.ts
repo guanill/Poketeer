@@ -870,10 +870,9 @@ export async function supabaseScan(
   let usedPaddle = false;
   let effectiveLang = lang;  // May be overridden by auto-detection
 
-  // Pass non-English user pick as a hint; otherwise let PaddleOCR auto-detect
-  // (auto does best for mixed Latin cards and avoids locking EN cards to 'en').
-  const paddleLang: ScanLanguage | 'auto' = lang === 'en' ? 'auto' : lang;
-  const paddleResult = await tryPaddleOcr(imageFile, paddleLang);
+  // Always auto-detect — PaddleOCR picks the right engine per-image.
+  // The `lang` argument is retained only as a Tesseract fallback hint.
+  const paddleResult = await tryPaddleOcr(imageFile, 'auto');
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;

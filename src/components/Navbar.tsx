@@ -68,14 +68,13 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/sets', icon: Layers, label: 'All Sets' },
   { to: '/collection', icon: BookOpen, label: 'Collection' },
-  { to: '/wishlist', icon: Heart, label: 'Wishlist' },
   { to: '/search', icon: Search, label: 'Search' },
 ];
 
-// Mobile bottom bar splits around the central FAB — 2|FAB|3 keeps the FAB
-// visually centered with 5 tabs (3|FAB|2 would push it 8% to the right).
+// 4 tabs + center FAB → symmetric 2|FAB|2. Wishlist moved to the heart
+// button next to the Poketeer title.
 const mobileLeft  = navItems.slice(0, 2); // Dashboard, Sets
-const mobileRight = navItems.slice(2);    // Collection, Wishlist, Search
+const mobileRight = navItems.slice(2);    // Collection, Search
 
 function UserMenu() {
   const { user, signInWithGoogle, signInWithEmail, signUp, signOut, resetPassword, loading } = useAuth();
@@ -146,9 +145,8 @@ function UserMenu() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: -4 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 mt-2 w-64 rounded-xl overflow-hidden z-50"
+              className="surface-panel absolute right-0 mt-2 w-64 rounded-xl overflow-hidden z-50"
               style={{
-                background: 'linear-gradient(145deg, #1a1a2e, #13132a)',
                 border: '1px solid rgba(139,92,246,0.2)',
                 boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
               }}
@@ -189,11 +187,8 @@ function UserMenu() {
                       }
                     }}
                     disabled={submitting}
-                    className="w-full py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
-                    style={{
-                      background: 'linear-gradient(135deg, #F59E0B, #d97706)',
-                      color: '#000',
-                    }}
+                    className="btn-gradient-amber w-full py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
+                    style={{ color: '#000' }}
                   >
                     {submitting ? '...' : 'Send Reset Link'}
                   </button>
@@ -262,11 +257,8 @@ function UserMenu() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="w-full py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
-                    style={{
-                      background: 'linear-gradient(135deg, #F59E0B, #d97706)',
-                      color: '#000',
-                    }}
+                    className="btn-gradient-amber w-full py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
+                    style={{ color: '#000' }}
                   >
                     {submitting ? '...' : isSignUp ? 'Create Account' : 'Sign In'}
                   </button>
@@ -319,9 +311,8 @@ function UserMenu() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 mt-2 w-48 rounded-xl overflow-hidden z-50"
+            className="surface-panel absolute right-0 mt-2 w-48 rounded-xl overflow-hidden z-50"
             style={{
-              background: 'linear-gradient(145deg, #1a1a2e, #13132a)',
               border: '1px solid rgba(139,92,246,0.2)',
               boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
             }}
@@ -367,21 +358,55 @@ export function Navbar() {
       }}
     >
       <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-        {/* Logo */}
-        <NavLink to="/" className="flex items-center gap-2.5 group">
-          <motion.div
-            whileHover={{ y: -2, scale: 1.12, rotateZ: -4 }}
-            transition={{ duration: 0.3, type: 'spring' }}
-            className="shrink-0"
-            style={{ filter: 'drop-shadow(0 0 8px rgba(139,92,246,0.6))' }}
-          >
-            <CardIcon size={30} />
-          </motion.div>
-          <span className="text-xl font-black tracking-tight" style={{ fontFamily: "'Nunito', sans-serif" }}>
-            <span className="text-gradient-gold">Poke</span>
-            <span className="text-white">teer</span>
-          </span>
-        </NavLink>
+        {/* Logo + Wishlist heart */}
+        <div className="flex items-center gap-2">
+          <NavLink to="/" className="flex items-center gap-2.5 group">
+            <motion.div
+              whileHover={{ y: -2, scale: 1.12, rotateZ: -4 }}
+              transition={{ duration: 0.3, type: 'spring' }}
+              className="shrink-0"
+              style={{ filter: 'drop-shadow(0 0 8px rgba(139,92,246,0.6))' }}
+            >
+              <CardIcon size={30} />
+            </motion.div>
+            <span className="text-xl font-black tracking-tight" style={{ fontFamily: "'Nunito', sans-serif" }}>
+              <span className="text-gradient-gold">Poke</span>
+              <span className="text-white">teer</span>
+            </span>
+          </NavLink>
+          <NavLink to="/wishlist" aria-label="Wishlist" className="relative">
+            {({ isActive }) => (
+              <motion.div
+                whileHover={{ scale: 1.12, y: -1 }}
+                whileTap={{ scale: 0.9 }}
+                className="relative flex items-center justify-center w-9 h-9 rounded-full transition-colors"
+                style={{
+                  background: isActive ? 'rgba(244,63,94,0.18)' : 'transparent',
+                  border: `1px solid ${isActive ? 'rgba(244,63,94,0.45)' : 'rgba(244,63,94,0.18)'}`,
+                }}
+              >
+                <Heart
+                  size={17}
+                  strokeWidth={2.2}
+                  style={{ color: '#fb7185' }}
+                  fill={wishlistCount > 0 ? '#fb7185' : 'none'}
+                />
+                {wishlistCount > 0 && (
+                  <span
+                    className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] font-black flex items-center justify-center"
+                    style={{
+                      background: 'linear-gradient(135deg, #f43f5e, #be123c)',
+                      color: '#fff',
+                      boxShadow: '0 0 0 2px rgba(8,5,18,0.97)',
+                    }}
+                  >
+                    {wishlistCount > 99 ? '99+' : wishlistCount}
+                  </span>
+                )}
+              </motion.div>
+            )}
+          </NavLink>
+        </div>
 
         {/* Nav Links */}
         <div className="hidden md:flex items-center gap-0.5">
@@ -420,9 +445,8 @@ export function Navbar() {
             whileHover={{ scale: 1.06, y: -1 }}
             whileTap={{ scale: 0.94 }}
             onClick={openScanner}
-            className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-black transition-shadow"
+            className="btn-gradient-amber hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-black transition-shadow"
             style={{
-              background: 'linear-gradient(135deg, #F59E0B, #d97706)',
               color: '#1a0a00',
               boxShadow: '0 0 0 1px rgba(245,158,11,0.4), 0 4px 16px rgba(245,158,11,0.35)',
             }}
@@ -444,21 +468,6 @@ export function Navbar() {
               <CardIcon size={14} />
               {uniqueCards} cards
             </motion.div>
-            {wishlistCount > 0 && (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                whileHover={{ scale: 1.05 }}
-                className="px-3 py-1.5 rounded-full text-xs font-bold"
-                style={{
-                  background: 'rgba(244,63,94,0.15)',
-                  border: '1px solid rgba(244,63,94,0.3)',
-                  color: '#fb7185',
-                }}
-              >
-                ♥ {wishlistCount}
-              </motion.div>
-            )}
           </div>
           <UserMenu />
         </div>

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Heart, DollarSign, Package, Star, ExternalLink, Check, ZoomIn } from 'lucide-react';
 import type { PokemonCard, CardCondition, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
+import { confirmAction } from '../store/confirmStore';
 import { getCardMarketPrice, getRarityColor, getAvailableVariants, type PriceDetails } from '../services/pokemonTCG';
 import { ImageZoom } from './ImageZoom';
 
@@ -106,9 +107,8 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20, transition: { duration: 0.15 } }}
           transition={{ type: 'spring', stiffness: 260, damping: 28, delay: 0.05 }}
-          className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl pointer-events-auto"
+          className="surface-modal relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl pointer-events-auto"
           style={{
-            background: 'linear-gradient(145deg, #1a1a2e, #0f0f2a)',
             border: `1px solid ${rarityColor}40`,
             boxShadow: `0 25px 80px rgba(0,0,0,0.8), 0 0 40px ${rarityColor}20`,
           }}
@@ -162,10 +162,9 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
                     </div>
                   ) : (
                     <div
-                      className="w-36 sm:w-44 rounded-xl flex flex-col items-center justify-center gap-2"
+                      className="surface-inset w-36 sm:w-44 rounded-xl flex flex-col items-center justify-center gap-2"
                       style={{
                         height: '240px',
-                        background: 'linear-gradient(145deg, #1a1a3e, #0f0f2a)',
                         border: `1px solid ${rarityColor}40`,
                         boxShadow: `0 20px 40px ${rarityColor}20`,
                       }}
@@ -339,10 +338,18 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
                           <Plus size={14} />
                         </button>
                         <button
-                          onClick={() => owned.quantity > 1
-                            ? updateCard(card.id, { quantity: owned.quantity - 1 })
-                            : removeCard(card.id)
-                          }
+                          onClick={async () => {
+                            if (owned.quantity > 1) {
+                              updateCard(card.id, { quantity: owned.quantity - 1 });
+                              return;
+                            }
+                            const ok = await confirmAction({
+                              title: 'Remove from collection?',
+                              message: `${card.name} will be removed from your collection.`,
+                              confirmText: 'Remove',
+                            });
+                            if (ok) removeCard(card.id);
+                          }}
                           className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
                         >
                           <Minus size={14} />
@@ -442,12 +449,7 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
                       whileTap={addedFlash > 0 ? undefined : { scale: 0.98 }}
                       onClick={handleAddToCollection}
                       disabled={addedFlash > 0}
-                      className="flex-1 py-2.5 rounded-xl font-bold text-sm text-black transition-all disabled:opacity-90"
-                      style={{
-                        background: addedFlash > 0
-                          ? 'linear-gradient(135deg, #10b981, #059669)'
-                          : 'linear-gradient(135deg, #F59E0B, #d97706)',
-                      }}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-sm text-black transition-all disabled:opacity-90 ${addedFlash > 0 ? 'btn-gradient-emerald' : 'btn-gradient-amber'}`}
                     >
                       <div className="flex items-center justify-center gap-2">
                         {addedFlash > 0 ? (
@@ -471,7 +473,18 @@ export function CardDetailModal({ card, onClose, priceDetails }: CardDetailModal
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => inWishlist ? removeFromWishlist(card.id) : addToWishlist(card.id, marketPrice ?? undefined)}
+                onClick={async () => {
+                  if (!inWishlist) {
+                    addToWishlist(card.id, marketPrice ?? undefined);
+                    return;
+                  }
+                  const ok = await confirmAction({
+                    title: 'Remove from wishlist?',
+                    message: `${card.name} will be removed from your wishlist.`,
+                    confirmText: 'Remove',
+                  });
+                  if (ok) removeFromWishlist(card.id);
+                }}
                 className={`mt-2 w-full py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
                   inWishlist
                     ? 'bg-pink-500/30 text-pink-400 border border-pink-500/30'

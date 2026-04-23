@@ -2,11 +2,12 @@ import { useState, useMemo, useDeferredValue, useEffect, useCallback } from 'rea
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Search, SlidersHorizontal, Layers, Globe } from 'lucide-react';
+import { Search, SlidersHorizontal, Layers } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
 import type { PokemonSet } from '../types';
 import { SetCard } from '../components/SetCard';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { QueryErrorState } from '../components/QueryErrorState';
 import { useCollectionStore } from '../store/collectionStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { getEra, ERA_ORDER } from '../utils/eras';
@@ -54,7 +55,7 @@ export function Sets() {
     [lang],
   );
 
-  const { data: sets, isLoading } = useQuery({
+  const { data: sets, isLoading, isError, refetch } = useQuery({
     queryKey: ['sets', 'v3', lang],
     queryFn: () => pokemonTCGService.getSets(lang),
     staleTime: 1000 * 60 * 10,
@@ -203,23 +204,20 @@ export function Sets() {
           </p>
         </div>
 
-        {/* Language switcher — hidden when only one language is enabled */}
+        {/* Language switcher — hidden when only one language is enabled.
+            Full-width + evenly split on mobile, compact inline on desktop. */}
         {availableLangs.length > 1 && (
           <div
-            className="flex gap-1 p-1 rounded-2xl"
-            style={{
-              background: 'linear-gradient(145deg, #13132a, #0f0f22)',
-              border: '1px solid rgba(139,92,246,0.15)',
-            }}
+            className="surface-sunken flex gap-1 p-1 rounded-2xl w-full md:w-auto"
+            style={{ border: '1px solid rgba(139,92,246,0.15)' }}
           >
             {availableLangs.map(l => (
               <motion.button
                 key={l}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => handleLangChange(l)}
-                className={`lang-tab ${lang === l ? 'lang-tab-active' : ''}`}
+                className={`lang-tab flex-1 md:flex-none justify-center ${lang === l ? 'lang-tab-active' : ''}`}
               >
-                <Globe size={13} />
                 <span>{LANG_LABELS[l].flag}</span>
                 {LANG_LABELS[l].label}
               </motion.button>
@@ -300,7 +298,13 @@ export function Sets() {
       </div>
 
       {/* ── Sets Grid ────────────────────────────────────── */}
-      {isLoading ? (
+      {isError ? (
+        <QueryErrorState
+          title="Couldn't load sets"
+          message="We hit a snag fetching the set list."
+          onRetry={() => refetch()}
+        />
+      ) : isLoading ? (
         <LoadingSkeleton count={12} type="set" />
       ) : groupedSets ? (
         <AnimatePresence mode="popLayout">
@@ -388,11 +392,8 @@ export function Sets() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center py-20 rounded-2xl"
-          style={{
-            background: 'linear-gradient(145deg, #111128, #0d0d20)',
-            border: '1px solid rgba(139,92,246,0.1)',
-          }}
+          className="surface-deep text-center py-20 rounded-2xl"
+          style={{ border: '1px solid rgba(139,92,246,0.1)' }}
         >
           <div className="text-5xl mb-4 opacity-40">🃏</div>
           <p className="text-gray-400 font-semibold">No sets matched your search</p>

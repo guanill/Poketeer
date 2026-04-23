@@ -13,6 +13,7 @@ import { Settings } from './pages/Settings';
 import { AuthProvider } from './lib/auth';
 import { AuthSync } from './components/AuthSync';
 import { ScanModal } from './components/ScanModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -81,6 +82,7 @@ function App() {
             <Navbar />
             <AppRoutes />
             <ScanModal />
+            <ConfirmDialog />
           </div>
         </HashRouter>
       </AuthProvider>

@@ -3,9 +3,12 @@ import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Heart, Trash2, DollarSign, Grid, LayoutList, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService, getCardMarketPrice } from '../services/pokemonTCG';
+import { useCardsByIds, usePricesByIds } from '../hooks/useCardsByIds';
 import { useCollectionStore } from '../store/collectionStore';
+import { confirmAction } from '../store/confirmStore';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
+import { QueryErrorState } from '../components/QueryErrorState';
 import { getRarityRank, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard, WishlistItem } from '../types';
 
@@ -31,19 +34,8 @@ export function Wishlist() {
 
   const cardIds = wishlist.map(w => w.cardId);
 
-  const { data: cards, isLoading } = useQuery({
-    queryKey: ['wishlist-cards', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getCardsByIds(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 10,
-  });
-
-  const { data: prices = {} } = useQuery({
-    queryKey: ['wishlist-prices', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getPrices(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 60,
-  });
+  const { data: cards, isLoading, isError, refetch } = useCardsByIds(cardIds);
+  const { data: prices = {} } = usePricesByIds(cardIds);
 
   const { data: selectedCardPriceDetails } = useQuery({
     queryKey: ['price-details', selectedCard?.id ?? ''],
@@ -129,11 +121,8 @@ export function Wishlist() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center py-24 rounded-2xl"
-          style={{
-            background: 'linear-gradient(145deg, #111128, #0d0d20)',
-            border: '1px solid rgba(139,92,246,0.12)',
-          }}
+          className="surface-deep text-center py-24 rounded-2xl"
+          style={{ border: '1px solid rgba(139,92,246,0.12)' }}
         >
           <motion.div
             animate={{ scale: [1, 1.1, 1] }}
@@ -266,11 +255,17 @@ export function Wishlist() {
       )}
 
       {/* Cards */}
-      {isLoading ? (
+      {isError ? (
+        <QueryErrorState
+          title="Couldn't load your wishlist"
+          message="We hit a snag fetching card details."
+          onRetry={() => refetch()}
+        />
+      ) : isLoading ? (
         viewMode === 'grid' ? (
           <div className={gridClass}>
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="aspect-[2.5/3.5] rounded-2xl bg-white/5 shimmer" />
+              <div key={i} className="aspect-2.5/3.5 rounded-2xl bg-white/5 shimmer" />
             ))}
           </div>
         ) : (
@@ -394,7 +389,14 @@ export function Wishlist() {
                     )}
                     <motion.button
                       whileTap={{ scale: 0.9 }}
-                      onClick={() => removeFromWishlist(item.cardId)}
+                      onClick={async () => {
+                        const ok = await confirmAction({
+                          title: 'Remove from wishlist?',
+                          message: `${card?.name ?? 'This card'} will be removed from your wishlist.`,
+                          confirmText: 'Remove',
+                        });
+                        if (ok) removeFromWishlist(item.cardId);
+                      }}
                       className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
                     >
                       <Trash2 size={12} />

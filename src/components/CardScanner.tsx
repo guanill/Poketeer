@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera, Upload, X, Scan, AlertTriangle, CheckCircle,
-  Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi, Globe,
+  Plus, Loader2, ChevronDown, ChevronUp, Search, Wifi,
 } from 'lucide-react';
 import type { ScanMatch } from '../services/cardScanService';
 import { cardScanService } from '../services/cardScanService';
@@ -157,9 +157,8 @@ function JobCard({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: 60, scale: 0.95 }}
       transition={{ duration: 0.25 }}
-      className="rounded-xl overflow-hidden"
+      className="surface-panel rounded-xl overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, #1a1a2e, #13132a)',
         border: `1px solid ${
           job.status === 'scanning' ? 'rgba(245,158,11,0.25)'
           : job.status === 'error'  ? 'rgba(239,68,68,0.25)'
@@ -384,7 +383,6 @@ export function CardScanner() {
   const uid = useId();
   const jobs = useScanStore(s => s.jobs);
   const scanLang = useScanStore(s => s.scanLang);
-  const setScanLang = useScanStore(s => s.setScanLang);
   const addJob = useScanStore(s => s.addJob);
   const updateJob = useScanStore(s => s.updateJob);
   const toggleJob = useScanStore(s => s.toggleJob);
@@ -747,28 +745,6 @@ export function CardScanner() {
           )}
         </AnimatePresence>
 
-        {/* Scan language selector */}
-        <div className="flex items-center gap-2 p-2 rounded-xl bg-white/3 border border-white/8">
-          <Globe size={13} className="text-gray-500 shrink-0 ml-1" />
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider mr-1">Language</span>
-          <div className="flex gap-1">
-            {(['en', 'ja', 'th'] as const).map(l => (
-              <button
-                key={l}
-                onClick={() => setScanLang(l)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
-                  scanLang === l
-                    ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                    : 'bg-white/5 text-gray-500 border border-white/10 hover:text-gray-300'
-                }`}
-              >
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          <span className="ml-auto mr-1 text-[10px] text-gray-600">auto-detect active</span>
-        </div>
-
         {/* Server connection (native only) */}
         {isNativePlatform() && (
           <div className="p-3 rounded-xl bg-white/3 border border-white/8 space-y-2">
@@ -870,11 +846,8 @@ export function CardScanner() {
                   <motion.button
                     whileTap={{ scale: 0.85 }}
                     onPointerDown={captureInlineFrame}
-                    className="w-16 h-16 rounded-full flex items-center justify-center"
-                    style={{
-                      background: 'linear-gradient(135deg, #F59E0B, #d97706)',
-                      boxShadow: '0 0 24px rgba(245,158,11,0.4), inset 0 2px 0 rgba(255,255,255,0.2)',
-                    }}
+                    className="btn-gradient-amber w-16 h-16 rounded-full flex items-center justify-center"
+                    style={{ boxShadow: '0 0 24px rgba(245,158,11,0.4), inset 0 2px 0 rgba(255,255,255,0.2)' }}
                   >
                     <div className="w-12 h-12 rounded-full border-2 border-black/20 flex items-center justify-center">
                       <Camera size={22} className="text-black" />

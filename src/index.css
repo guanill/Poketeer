@@ -210,6 +210,19 @@
   .bg-card      { background-color: #1a1a2e; }
   .border-accent { border-color: #1a2a60; }
 
+  /* ── Gradient surfaces (reusable panel/card backgrounds) ── */
+  .surface-panel  { background: linear-gradient(145deg, #1a1a2e, #13132a); }
+  .surface-deep   { background: linear-gradient(145deg, #111128, #0d0d20); }
+  .surface-sunken { background: linear-gradient(145deg, #13132a, #0f0f22); }
+  .surface-raised { background: linear-gradient(145deg, #1c1c38, #12122a); }
+  .surface-modal  { background: linear-gradient(145deg, #1a1a2e, #0f0f2a); }
+  .surface-inset  { background: linear-gradient(145deg, #1a1a3e, #0f0f2a); }
+
+  /* ── Gradient buttons (shared accent fills) ──────────── */
+  .btn-gradient-amber { background: linear-gradient(135deg, #F59E0B, #d97706); }
+  .btn-gradient-emerald { background: linear-gradient(135deg, #10b981, #059669); }
+  .btn-gradient-danger { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+
   /* ── Page section header ───────────────────────────── */
   .page-section-label {
     font-family: 'Press Start 2P', monospace;

@@ -18,9 +18,8 @@ export function StatCard({ title, value, subtitle, icon, color, delay = 0, trend
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ delay, type: 'spring', stiffness: 200, damping: 20 }}
       whileHover={{ y: -4, scale: 1.02 }}
-      className="relative rounded-2xl p-4 overflow-hidden"
+      className="surface-raised relative rounded-2xl p-4 overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, #1c1c38 0%, #12122a 100%)',
         border: `1px solid ${color}35`,
         boxShadow: `0 4px 28px ${color}18, inset 0 1px 0 rgba(255,255,255,0.06)`,
       }}

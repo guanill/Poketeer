@@ -1,11 +1,12 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Search as SearchIcon, X, Sparkles, Loader2, ArrowUpDown, Flame } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
-import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { QueryErrorState } from '../components/QueryErrorState';
+import { VirtualCardGrid } from '../components/VirtualCardGrid';
 import { getRarityRank, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard } from '../types';
 
@@ -25,7 +26,6 @@ export function Search() {
   const [debounceTimeout, setDebounceTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('relevance');
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const handleInput = (value: string) => {
     setQuery(value);
@@ -47,6 +47,8 @@ export function Search() {
     isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
+    isError,
+    refetch,
   } = useInfiniteQuery({
     queryKey: ['search', debouncedQuery],
     queryFn: ({ pageParam = 1 }) =>
@@ -96,25 +98,6 @@ export function Search() {
     }
     return cards;
   }, [allCards, sortBy, typeFilter]);
-
-  // Infinite scroll observer (still wired up as a fallback)
-  const handleObserver = useCallback(
-    (entries: IntersectionObserverEntry[]) => {
-      const target = entries[0];
-      if (target.isIntersecting && hasNextPage && !isFetchingNextPage) {
-        fetchNextPage();
-      }
-    },
-    [hasNextPage, isFetchingNextPage, fetchNextPage],
-  );
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(handleObserver, { threshold: 0.1 });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [handleObserver]);
 
   // Auto-fetch remaining pages so the user sees every match without scrolling.
   useEffect(() => {
@@ -275,7 +258,15 @@ export function Search() {
 
       {/* Results */}
       <AnimatePresence mode="wait">
-        {isLoading && debouncedQuery ? (
+        {isError && debouncedQuery.length >= 2 ? (
+          <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <QueryErrorState
+              title="Search failed"
+              message="We couldn't reach the card database."
+              onRetry={() => refetch()}
+            />
+          </motion.div>
+        ) : isLoading && debouncedQuery ? (
           <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <LoadingSkeleton count={12} type="card" />
           </motion.div>
@@ -286,14 +277,13 @@ export function Search() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-              {displayCards.map((card) => (
-                <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
-              ))}
-            </div>
-
-            {/* Infinite scroll sentinel */}
-            <div ref={sentinelRef} className="h-4" />
+            <VirtualCardGrid
+              cards={displayCards}
+              onViewDetails={setSelectedCard}
+              onEndReached={() => {
+                if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+              }}
+            />
 
             {isFetchingNextPage && (
               <div className="flex justify-center py-6">
@@ -306,11 +296,8 @@ export function Search() {
             key="empty"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-center py-20 rounded-2xl"
-            style={{
-              background: 'linear-gradient(145deg, #111128, #0d0d20)',
-              border: '1px solid rgba(139,92,246,0.1)',
-            }}
+            className="surface-deep text-center py-20 rounded-2xl"
+            style={{ border: '1px solid rgba(139,92,246,0.1)' }}
           >
             <div className="text-5xl mb-4 opacity-40">&#x1F0CF;</div>
             <p className="text-gray-400 font-semibold">No cards found for "{debouncedQuery}"</p>

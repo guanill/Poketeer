@@ -31,9 +31,8 @@ export function ResetPassword() {
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <div
-        className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+        className="surface-panel w-full max-w-sm rounded-2xl p-6 space-y-4"
         style={{
-          background: 'linear-gradient(145deg, #1a1a2e, #13132a)',
           border: '1px solid rgba(139,92,246,0.2)',
           boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
         }}
@@ -65,11 +64,8 @@ export function ResetPassword() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-50"
-              style={{
-                background: 'linear-gradient(135deg, #F59E0B, #d97706)',
-                color: '#000',
-              }}
+              className="btn-gradient-amber w-full py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-50"
+              style={{ color: '#000' }}
             >
               {submitting ? '...' : 'Update Password'}
             </button>

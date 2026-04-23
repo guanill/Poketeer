@@ -3,9 +3,12 @@ import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Grid, LayoutList, ArrowUpDown, Flame, Repeat } from 'lucide-react';
 import { pokemonTCGService } from '../services/pokemonTCG';
+import { useCardsByIds, usePricesByIds } from '../hooks/useCardsByIds';
 import { useCollectionStore } from '../store/collectionStore';
 import { CardItem } from '../components/CardItem';
 import { CardDetailModal } from '../components/CardDetailModal';
+import { QueryErrorState } from '../components/QueryErrorState';
+import { VirtualCardGrid } from '../components/VirtualCardGrid';
 import { RARITY_ORDER, TYPE_COLORS } from '../utils/cardConstants';
 import type { PokemonCard } from '../types';
 
@@ -26,19 +29,8 @@ export function Collection() {
 
   const cardIds = Object.keys(owned);
 
-  const { data: cards, isLoading } = useQuery({
-    queryKey: ['collection-cards', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getCardsByIds(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 10,
-  });
-
-  const { data: prices = {} } = useQuery({
-    queryKey: ['prices', cardIds.join(',')],
-    queryFn: () => pokemonTCGService.getPrices(cardIds),
-    enabled: cardIds.length > 0,
-    staleTime: 1000 * 60 * 60,
-  });
+  const { data: cards, isLoading, isError, refetch } = useCardsByIds(cardIds);
+  const { data: prices = {} } = usePricesByIds(cardIds);
 
   const { data: selectedCardPriceDetails } = useQuery({
     queryKey: ['price-details', selectedCard?.id ?? ''],
@@ -127,11 +119,8 @@ export function Collection() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center py-24 rounded-2xl"
-          style={{
-            background: 'linear-gradient(145deg, #111128, #0d0d20)',
-            border: '1px solid rgba(139,92,246,0.12)',
-          }}
+          className="surface-deep text-center py-24 rounded-2xl"
+          style={{ border: '1px solid rgba(139,92,246,0.12)' }}
         >
           <motion.div
             animate={{ y: [0, -10, 0] }}
@@ -150,6 +139,21 @@ export function Collection() {
   const gridClass = gridSize === 'small'
     ? 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3'
     : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4';
+
+  const virtualBreakpoints = gridSize === 'small'
+    ? [
+        { min: 1280, cols: 8 },
+        { min: 1024, cols: 6 },
+        { min: 768, cols: 5 },
+        { min: 640, cols: 4 },
+        { min: 0, cols: 3 },
+      ] as const
+    : [
+        { min: 1024, cols: 5 },
+        { min: 768, cols: 4 },
+        { min: 640, cols: 3 },
+        { min: 0, cols: 2 },
+      ] as const;
 
   return (
     <LayoutGroup>
@@ -174,11 +178,8 @@ export function Collection() {
 
       {/* View tabs */}
       <div
-        className="flex gap-1 p-1 rounded-2xl w-fit"
-        style={{
-          background: 'linear-gradient(145deg, #13132a, #0f0f22)',
-          border: '1px solid rgba(139,92,246,0.15)',
-        }}
+        className="surface-sunken flex gap-1 p-1 rounded-2xl w-fit"
+        style={{ border: '1px solid rgba(139,92,246,0.15)' }}
       >
         <motion.button
           whileTap={{ scale: 0.96 }}
@@ -318,10 +319,16 @@ export function Collection() {
       )}
 
       {/* Cards */}
-      {isLoading ? (
+      {isError ? (
+        <QueryErrorState
+          title="Couldn't load your collection"
+          message="We hit a snag fetching card details."
+          onRetry={() => refetch()}
+        />
+      ) : isLoading ? (
         <div className={gridClass}>
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[2.5/3.5] rounded-2xl bg-white/5 shimmer" />
+            <div key={i} className="aspect-2.5/3.5 rounded-2xl bg-white/5 shimmer" />
           ))}
         </div>
       ) : groupedBySet && viewTab === 'collection' ? (
@@ -347,19 +354,14 @@ export function Collection() {
           ))}
         </div>
       ) : (
-        // Flat grid view
-        <AnimatePresence mode="popLayout">
-          <motion.div
-            key={`${sortBy}-${typeFilter}-${viewTab}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className={gridClass}
-          >
-            {displayCards.map(card => (
-              <CardItem key={card.id} card={card} onViewDetails={setSelectedCard} />
-            ))}
-          </motion.div>
-        </AnimatePresence>
+        // Flat grid view — virtualized for large collections
+        <VirtualCardGrid
+          cards={displayCards}
+          onViewDetails={setSelectedCard}
+          estimatedRowHeight={gridSize === 'small' ? 280 : 340}
+          breakpoints={virtualBreakpoints}
+          gap={gridSize === 'small' ? '0.75rem' : '1rem'}
+        />
       )}
 
       {displayCards.length === 0 && !isLoading && (

@@ -3,6 +3,7 @@ import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import { Plus, Minus, Heart, DollarSign } from 'lucide-react';
 import type { PokemonCard, CardVariant } from '../types';
 import { useCollectionStore } from '../store/collectionStore';
+import { confirmAction } from '../store/confirmStore';
 import { getCardMarketPrice, getRarityColor, getAvailableVariants } from '../services/pokemonTCG';
 
 const VARIANT_ICONS: Record<CardVariant, { label: string; abbr: string; color: string; bg: string }> = {
@@ -136,9 +137,8 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
             />
           ) : (
             <div
-              className="w-full h-full rounded-lg flex flex-col items-center justify-center gap-1"
+              className="surface-inset w-full h-full rounded-lg flex flex-col items-center justify-center gap-1"
               style={{
-                background: 'linear-gradient(145deg, #1a1a3e, #0f0f2a)',
                 border: '1px solid rgba(139,92,246,0.2)',
                 filter: isOwned ? 'none' : 'grayscale(30%) brightness(0.85)',
               }}
@@ -216,7 +216,15 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
         {isOwned ? (
           <motion.button
             whileTap={{ scale: 0.85 }}
-            onClick={(e) => { e.stopPropagation(); removeCard(card.id); }}
+            onClick={async (e) => {
+              e.stopPropagation();
+              const ok = await confirmAction({
+                title: 'Remove from collection?',
+                message: `${card.name} will be removed from your collection.`,
+                confirmText: 'Remove',
+              });
+              if (ok) removeCard(card.id);
+            }}
             className="p-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 transition-colors"
             title="Remove from collection"
           >
@@ -233,9 +241,18 @@ export function CardItem({ card, onViewDetails }: CardItemProps) {
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.85 }}
-          onClick={(e) => {
+          onClick={async (e) => {
             e.stopPropagation();
-            if (inWishlist) { removeFromWishlist(card.id); } else { addToWishlist(card.id, marketPrice ?? undefined); }
+            if (inWishlist) {
+              const ok = await confirmAction({
+                title: 'Remove from wishlist?',
+                message: `${card.name} will be removed from your wishlist.`,
+                confirmText: 'Remove',
+              });
+              if (ok) removeFromWishlist(card.id);
+            } else {
+              addToWishlist(card.id, marketPrice ?? undefined);
+            }
           }}
           className={`p-1.5 rounded-lg transition-colors ${
             inWishlist ? 'bg-pink-500/40 text-pink-400' : 'bg-pink-500/10 hover:bg-pink-500/30 text-pink-500'
