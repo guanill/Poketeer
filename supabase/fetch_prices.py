@@ -58,28 +58,65 @@ def upsert_batch(table: str, rows: list[dict], batch_size: int = BATCH):
 
 
 
-def get_set_ids() -> list[str]:
-    """Fetch English set IDs from Supabase sets table."""
+def get_set_mappings() -> list[tuple[str, str]]:
+    """Fetch EN + JA sets and return [(our_set_id, tcg_api_set_id), ...].
+
+    JA set IDs in our DB look like `SV7a-ja`; pokemontcg.io uses the lowercase
+    stem `sv7a`. EN IDs pass through unchanged.
+    """
     print("Fetching set IDs from Supabase...")
-    all_ids: list[str] = []
+    rows: list[tuple[str, str]] = []
     page_size = 1000
     offset = 0
     while True:
         res = (
             sb.table("sets")
-            .select("id")
-            .eq("language", "en")
+            .select("id, language")
+            .in_("language", ["en", "ja"])
             .range(offset, offset + page_size - 1)
             .execute()
         )
         if not res.data:
             break
-        all_ids.extend(row["id"] for row in res.data)
+        for row in res.data:
+            our_id = row["id"]
+            if row["language"] == "ja" and our_id.endswith("-ja"):
+                tcg_id = our_id[:-3].lower()
+            else:
+                tcg_id = our_id
+            rows.append((our_id, tcg_id))
         if len(res.data) < page_size:
             break
         offset += page_size
-    print(f"  Found {len(all_ids)} English sets")
-    return sorted(all_ids)
+    en_count = sum(1 for r in rows if not r[0].endswith("-ja"))
+    ja_count = len(rows) - en_count
+    print(f"  Found {en_count} EN sets, {ja_count} JA sets")
+    return sorted(rows)
+
+
+def _normalize_card_id_to_tcg(our_id: str) -> str | None:
+    """`SV7a-005-ja` -> `sv7a-5`. Returns None for non-JA ids."""
+    if not our_id.endswith("-ja"):
+        return None
+    stem = our_id[:-3]
+    parts = stem.rsplit("-", 1)
+    if len(parts) != 2:
+        return None
+    set_code, number = parts
+    try:
+        return f"{set_code.lower()}-{int(number)}"
+    except ValueError:
+        return None
+
+
+def build_ja_remap(known_card_ids: set[str]) -> dict[str, str]:
+    """Reverse-lookup: pokemontcg.io-format id -> our `-ja` id."""
+    remap: dict[str, str] = {}
+    for our_id in known_card_ids:
+        tcg_id = _normalize_card_id_to_tcg(our_id)
+        if tcg_id is not None:
+            remap[tcg_id] = our_id
+    return remap
 
 
 def get_known_card_ids() -> set[str]:
@@ -215,23 +252,37 @@ def main():
 
     start = time.time()
 
-    set_ids = get_set_ids()
+    set_mappings = get_set_mappings()
     known_card_ids = get_known_card_ids()
-    print(f"\nFetching prices for {len(set_ids)} sets...\n")
+    ja_remap = build_ja_remap(known_card_ids)
+    if ja_remap:
+        print(f"  Built JA id remap for {len(ja_remap)} cards")
+    print(f"\nFetching prices for {len(set_mappings)} sets...\n")
 
     all_rows: list[dict] = []
     priced = 0
     skipped_unknown = 0
 
-    for i, set_id in enumerate(set_ids):
-        print(f"  [{i+1}/{len(set_ids)}] {set_id}...", end=" ")
-        prices = fetch_prices_for_set(set_id)
+    for i, (our_set_id, tcg_set_id) in enumerate(set_mappings):
+        is_ja = our_set_id != tcg_set_id
+        label = our_set_id if not is_ja else f"{our_set_id} -> {tcg_set_id}"
+        print(f"  [{i+1}/{len(set_mappings)}] {label}...", end=" ")
+        prices = fetch_prices_for_set(tcg_set_id)
         count = 0
         skipped = 0
-        for card_id, info in prices.items():
-            if card_id not in known_card_ids:
-                skipped += 1
-                continue
+        for tcg_card_id, info in prices.items():
+            # For a JA set, rewrite each id to its `-ja` equivalent; drop
+            # anything we don't have. For an EN set, keep as-is.
+            if is_ja:
+                card_id = ja_remap.get(tcg_card_id)
+                if card_id is None:
+                    skipped += 1
+                    continue
+            else:
+                if tcg_card_id not in known_card_ids:
+                    skipped += 1
+                    continue
+                card_id = tcg_card_id
             market_price = info.get("market")
             all_rows.append({
                 "card_id": card_id,

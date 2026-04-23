@@ -12,22 +12,68 @@ const BATCH_SIZE = 30;
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-async function getSetIds(): Promise<string[]> {
-  const ids: string[] = [];
+type SetMapping = { our: string; tcg: string };
+
+async function getSetMappings(): Promise<SetMapping[]> {
+  // JA set IDs in our DB look like `SV7a-ja`; pokemontcg.io uses the
+  // lowercase stem `sv7a`. EN IDs pass through unchanged.
+  const rows: SetMapping[] = [];
   let offset = 0;
   const pageSize = 1000;
   while (true) {
     const { data } = await sb
       .from("sets")
-      .select("id")
-      .eq("language", "en")
+      .select("id, language")
+      .in("language", ["en", "ja"])
       .range(offset, offset + pageSize - 1);
     if (!data || data.length === 0) break;
-    ids.push(...data.map((r: { id: string }) => r.id));
+    for (const row of data as { id: string; language: string }[]) {
+      const our = row.id;
+      const tcg = row.language === "ja" && our.endsWith("-ja")
+        ? our.slice(0, -3).toLowerCase()
+        : our;
+      rows.push({ our, tcg });
+    }
     if (data.length < pageSize) break;
     offset += pageSize;
   }
-  return ids;
+  // Stable order so the offset cursor is deterministic across runs
+  rows.sort((a, b) => a.our.localeCompare(b.our));
+  return rows;
+}
+
+function normalizeCardIdToTcg(ourId: string): string | null {
+  if (!ourId.endsWith("-ja")) return null;
+  const stem = ourId.slice(0, -3);
+  const dash = stem.lastIndexOf("-");
+  if (dash === -1) return null;
+  const setCode = stem.slice(0, dash);
+  const number = stem.slice(dash + 1);
+  const n = parseInt(number, 10);
+  if (Number.isNaN(n)) return null;
+  return `${setCode.toLowerCase()}-${n}`;
+}
+
+async function buildJaRemap(): Promise<Map<string, string>> {
+  // Reverse-lookup: pokemontcg.io-format id -> our `-ja` id.
+  const remap = new Map<string, string>();
+  let offset = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data } = await sb
+      .from("cards")
+      .select("id")
+      .like("id", "%-ja")
+      .range(offset, offset + pageSize - 1);
+    if (!data || data.length === 0) break;
+    for (const row of data as { id: string }[]) {
+      const tcg = normalizeCardIdToTcg(row.id);
+      if (tcg) remap.set(tcg, row.id);
+    }
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return remap;
 }
 
 async function getLastOffset(): Promise<number> {
@@ -103,9 +149,11 @@ async function fetchPricesForSet(
 
 Deno.serve(async () => {
   try {
-    const setIds = await getSetIds();
+    const setMappings = await getSetMappings();
+    const hasJa = setMappings.some((s) => s.our !== s.tcg);
+    const jaRemap = hasJa ? await buildJaRemap() : new Map<string, string>();
     const offset = await getLastOffset();
-    const batch = setIds.slice(offset, offset + BATCH_SIZE);
+    const batch = setMappings.slice(offset, offset + BATCH_SIZE);
 
     if (batch.length === 0) {
       // We've gone through all sets — reset to 0 for next cycle
@@ -117,7 +165,7 @@ Deno.serve(async () => {
     }
 
     console.log(
-      `Processing sets ${offset + 1}-${offset + batch.length} of ${setIds.length}`
+      `Processing sets ${offset + 1}-${offset + batch.length} of ${setMappings.length}`
     );
 
     let totalPriced = 0;
@@ -125,17 +173,31 @@ Deno.serve(async () => {
 
     let setsProcessed = 0;
 
-    for (const setId of batch) {
-      const rows = await fetchPricesForSet(setId);
+    for (const { our, tcg } of batch) {
+      const rows = await fetchPricesForSet(tcg);
 
       // If API returned nothing, it's probably down — stop and retry next run
       if (rows.length === 0) {
-        console.log(`  Set ${setId} returned 0 results, API may be down — stopping`);
+        console.log(`  Set ${our} returned 0 results, API may be down — stopping`);
         break;
       }
 
+      // For a JA set, pokemontcg.io returns English prints — rewrite each
+      // card_id to its `-ja` equivalent and drop cards we don't have in our
+      // DB. For an EN set, pass through unchanged.
+      const isJa = our !== tcg;
+      const remapped: typeof rows = [];
+      for (const r of rows) {
+        if (isJa) {
+          const jaId = jaRemap.get(r.card_id);
+          if (jaId) remapped.push({ ...r, card_id: jaId });
+        } else {
+          remapped.push(r);
+        }
+      }
+
       // Only upsert rows that have a price
-      const priced = rows.filter((r) => r.market_price !== null);
+      const priced = remapped.filter((r) => r.market_price !== null);
       if (priced.length > 0) {
         for (let j = 0; j < priced.length; j += 500) {
           await sb.from("prices_cache").upsert(priced.slice(j, j + 500));
@@ -153,10 +215,10 @@ Deno.serve(async () => {
     // Only advance offset for sets we actually processed
     if (setsProcessed > 0) {
       const nextOffset = offset + setsProcessed;
-      await setLastOffset(nextOffset >= setIds.length ? 0 : nextOffset);
+      await setLastOffset(nextOffset >= setMappings.length ? 0 : nextOffset);
     }
 
-    const msg = `Sets ${offset + 1}-${offset + batch.length}/${setIds.length}: ${totalPriced} priced / ${totalCards} cards`;
+    const msg = `Sets ${offset + 1}-${offset + batch.length}/${setMappings.length}: ${totalPriced} priced / ${totalCards} cards`;
     console.log(msg);
     return new Response(JSON.stringify({ ok: true, message: msg }), {
       headers: { "Content-Type": "application/json" },
