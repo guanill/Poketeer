@@ -655,6 +655,25 @@ async function searchByNumber(
   applyHpHint(results, hpHint, nameVariants.length > 0);
   applySupertypeHint(results, supertypeHint);
   results.sort((a, b) => b.confidence - a.confidence);
+
+  // When we have a confident name from OCR, reject results whose name doesn't
+  // at least fuzzily match. Without this, a card with the right number but
+  // wrong name slips through at the 0.20 floor score — user sees e.g. Pikachu
+  // when OCR clearly read "Victini". Better to return nothing so the retry
+  // paths (other languages, visual match) can take over.
+  if (nameVariants.length > 0 && results.length > 0) {
+    const hint = nameVariants[0];
+    const topSim = Math.max(
+      ...results.map(r =>
+        Math.max(
+          fuzzySimilarity(hint, r.name),
+          r.name_en ? fuzzySimilarity(hint, r.name_en) : 0,
+        ),
+      ),
+    );
+    if (topSim < 0.45) return [];
+  }
+
   return results.slice(0, topK);
 }
 
