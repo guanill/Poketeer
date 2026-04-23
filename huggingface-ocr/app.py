@@ -517,59 +517,35 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
     img_h, img_w = img_array.shape[:2]
 
     if lang == "auto":
-        # Run both engines — JA reads kanji/kana/Latin, EN reads Latin with
-        # higher accuracy on English card fonts. We merge the signals.
-        # Running EN-only first and then detecting from its output (the old
-        # approach) never detected JA, because the EN model returns empty /
-        # Latin-garbage for JA-script regions — `detect_language` sees no
-        # JA Unicode and stays on "en".
+        # Step 1: Run EN engine (fastest) to get raw text + positions
         result_en = ocr_en.ocr(img_array, cls=True)
-        result_ja = ocr_ja.ocr(img_array, cls=True)
 
-        def _annotate(result):
-            out = []
-            if result and result[0]:
-                for line in result[0]:
-                    pos = get_relative_position(line[0], img_w, img_h)
-                    region = classify_region(pos)
-                    out.append({"text": line[1][0], "region": region})
-            return out
+        # Build position-aware text list for language detection
+        en_annotated = []
+        if result_en and result_en[0]:
+            for line in result_en[0]:
+                pos = get_relative_position(line[0], img_w, img_h)
+                region = classify_region(pos)
+                en_annotated.append({"text": line[1][0], "region": region})
 
-        en_annotated = _annotate(result_en)
-        ja_annotated = _annotate(result_ja)
+        detected = detect_language(en_annotated)
 
-        # Detect primarily from the JA engine — it sees the actual script.
-        # Fall back to EN annotations only when the JA engine returned nothing.
-        detected = detect_language(ja_annotated or en_annotated)
-
-        # Thai heuristic: PaddleOCR has no TH model, so `detect_language` will
-        # never say "th" — the EN/JA engines can't output Thai Unicode. If the
-        # name region came back (nearly) empty but the number region was read,
-        # the card is probably printed in a script neither engine handles →
-        # treat as Thai so the client searches the TH catalog.
-        if detected == "en":
-            name_chars = sum(
-                len(t["text"].strip())
-                for t in en_annotated + ja_annotated
-                if t.get("region") == "name"
-            )
-            number_chars = sum(
-                len(t["text"].strip())
-                for t in en_annotated + ja_annotated
-                if t.get("region") == "number"
-            )
-            if name_chars < 3 and number_chars >= 2:
-                detected = "th"
-
-        # Pick the result to return based on the detected language.
-        if detected == "ja" and result_ja and result_ja[0]:
-            # Merge JA + EN — JA for the name, EN for the (Latin) number/set.
-            if result_en and result_en[0]:
-                result = [deduplicate_results(list(result_ja[0]) + list(result_en[0]))]
-            else:
-                result = result_ja
+        # Step 2: If non-English detected, re-run with the right engine
+        if detected == "ja":
+            result_native = ocr_ja.ocr(img_array, cls=True)
+        elif detected == "th":
+            result_native = ocr_th.ocr(img_array, cls=True)
         else:
-            # EN or TH — TH uses the EN engine regardless (no Thai model).
+            detected = "en"
+            result_native = None
+
+        if result_native and result_native[0]:
+            # Merge: native engine results + EN engine results, deduplicated
+            merged = list(result_native[0])
+            if result_en and result_en[0]:
+                merged.extend(result_en[0])
+            result = [deduplicate_results(merged)]
+        else:
             result = result_en
     else:
         detected = lang

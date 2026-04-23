@@ -655,25 +655,6 @@ async function searchByNumber(
   applyHpHint(results, hpHint, nameVariants.length > 0);
   applySupertypeHint(results, supertypeHint);
   results.sort((a, b) => b.confidence - a.confidence);
-
-  // When we have a confident name from OCR, reject results whose name doesn't
-  // at least fuzzily match. Without this, a card with the right number but
-  // wrong name slips through at the 0.20 floor score — user sees e.g. Pikachu
-  // when OCR clearly read "Victini". Better to return nothing so the retry
-  // paths (other languages, visual match) can take over.
-  if (nameVariants.length > 0 && results.length > 0) {
-    const hint = nameVariants[0];
-    const topSim = Math.max(
-      ...results.map(r =>
-        Math.max(
-          fuzzySimilarity(hint, r.name),
-          r.name_en ? fuzzySimilarity(hint, r.name_en) : 0,
-        ),
-      ),
-    );
-    if (topSim < 0.45) return [];
-  }
-
   return results.slice(0, topK);
 }
 
@@ -889,9 +870,10 @@ export async function supabaseScan(
   let usedPaddle = false;
   let effectiveLang = lang;  // May be overridden by auto-detection
 
-  // Always auto-detect — PaddleOCR picks the right engine per-image.
-  // The `lang` argument is retained only as a Tesseract fallback hint.
-  const paddleResult = await tryPaddleOcr(imageFile, 'auto');
+  // Pass non-English user pick as a hint; otherwise let PaddleOCR auto-detect
+  // (auto does best for mixed Latin cards and avoids locking EN cards to 'en').
+  const paddleLang: ScanLanguage | 'auto' = lang === 'en' ? 'auto' : lang;
+  const paddleResult = await tryPaddleOcr(imageFile, paddleLang);
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;
