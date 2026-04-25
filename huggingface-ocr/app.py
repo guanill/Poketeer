@@ -212,29 +212,63 @@ _JA_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF]")
 _JA_SUFFIXES = re.compile(r"\b(ex|EX|GX|V|VSTAR|VMAX|VUNION|BREAK|TAG\s*TEAM|Lv\.\s*X|M\s)\b")
 
 
+_MIN_JA_CONF = 0.90  # Drop hallucinations (usually 0.6–0.85 confidence)
+
+# Stage labels that sit in the top-LEFT of the name region (x < 0.30).
+# Shared between extract_card_info (to skip them as names) and the auto
+# TH heuristic (to drop them from the low-confidence name check).
+_STAGE_RE = re.compile(
+    r"^("
+    r"Stage\s*[0-9]|Basic|BASIC|STAGE|Mega|MEGA|BREAK|Restored|RESTORED"
+    r"|たね|たねポケモン|1進化|2進化|進化"
+    r"|พื้นฐาน|ร่าง\s*1|ร่าง\s*2|อื่น\s*ๆ"
+    r"|V|VSTAR|VMAX|VUNION|V-UNION|TAG\s*TEAM"
+    r")\s*$", re.I
+)
+
+
 def detect_language(all_lines: list[dict]) -> str:
     """
     Detect card language from OCR results.
-    Focuses on the NAME region for script detection since
-    number/set regions are always Latin.
     Returns 'th', 'ja', or 'en'.
-    """
-    # Prioritize name region text for detection
-    name_texts = [t["text"] for t in all_lines if t.get("region") == "name"]
-    other_texts = [t["text"] for t in all_lines if t.get("region") == "other"]
-    # Check name region first, then all non-number text
-    for texts in [name_texts, other_texts, [t["text"] for t in all_lines]]:
-        combined = " ".join(texts)
-        # Strip out known Latin suffixes that appear on JA/TH cards
-        cleaned = _JA_SUFFIXES.sub("", combined)
 
+    The JA PaddleOCR engine hallucinates kanji on English cards at
+    low confidence (e.g. `円` / `店` from decorative elements). We
+    only count JA characters from OCR lines with conf ≥ 0.90, which
+    filters hallucinations without rejecting genuine JA text.
+    """
+    def _has_conf(t):
+        c = t.get("confidence", 1.0)
+        return isinstance(c, (int, float)) and c >= _MIN_JA_CONF
+
+    name_hi   = [t["text"] for t in all_lines if t.get("region") == "name"  and _has_conf(t)]
+    other_hi  = [t["text"] for t in all_lines if t.get("region") == "other" and _has_conf(t)]
+    all_hi    = [t["text"] for t in all_lines if _has_conf(t)]
+
+    def _score(texts, *, ja_threshold, th_threshold):
+        combined = " ".join(texts)
+        cleaned = _JA_SUFFIXES.sub("", combined)
         thai_count = len(_THAI_RE.findall(cleaned))
         ja_count = len(_JA_RE.findall(cleaned))
-
-        if thai_count >= 2:
+        if thai_count >= th_threshold:
             return "th"
-        if ja_count >= 1:
+        if ja_count >= ja_threshold:
             return "ja"
+        return None
+
+    # Strong signal: ≥2 high-confidence JA chars in the name region.
+    verdict = _score(name_hi, ja_threshold=2, th_threshold=2)
+    if verdict:
+        return verdict
+
+    # Fallback: substantial JA text anywhere else (flavor text, attack names).
+    # Raise the threshold to 4 since hallucinations sometimes cluster.
+    verdict = _score(other_hi, ja_threshold=4, th_threshold=2)
+    if verdict:
+        return verdict
+    verdict = _score(all_hi, ja_threshold=5, th_threshold=2)
+    if verdict:
+        return verdict
 
     return "en"
 
@@ -360,15 +394,7 @@ def extract_card_info(ocr_results, img_w, img_h):
     # The card name is top-center. Stage labels ("Basic", "Stage 1", "たね",
     # "พื้นฐาน") sit in the top-LEFT (x < 0.30). HP is top-RIGHT (x > 0.70).
     # So we prioritize text in the center of the name region.
-    _STAGE_RE = re.compile(
-        r"^("
-        r"Stage\s*[0-9]|Basic|BASIC|STAGE|Mega|MEGA|BREAK|Restored|RESTORED"
-        r"|たね|たねポケモン|1進化|2進化|進化"                       # Japanese
-        r"|พื้นฐาน|ร่าง\s*1|ร่าง\s*2|อื่น\s*ๆ"                  # Thai
-        r"|V|VSTAR|VMAX|VUNION|V-UNION|TAG\s*TEAM"               # Suffixes alone
-        r")\s*$", re.I
-    )
-
+    # `_STAGE_RE` is defined at module scope so the TH heuristic can share it.
     name_texts = [t for t in texts if t["region"] == "name"]
 
     # Sort: prefer center-x text (x_center 0.30–0.70) over far-left/right,
@@ -389,9 +415,11 @@ def extract_card_info(ocr_results, img_w, img_h):
                 continue
             if re.match(r"^(HP|hp)\s*\d+", txt):           # "HP 120"
                 continue
-            if _STAGE_RE.match(txt):                        # Stage label
+            if re.match(r"^\d+\s*(HP|hp)\b", txt):         # "40 HP"
                 continue
-            if xc < 0.20 and len(txt) <= 8:                # Far-left short text = likely stage
+            if re.fullmatch(r"(HP|hp)", txt):              # Bare "HP"
+                continue
+            if _STAGE_RE.match(txt):                        # Stage label
                 continue
             card_name = txt
             break
@@ -518,59 +546,78 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
 
     if lang == "auto":
         # Run both engines — JA reads kanji/kana/Latin, EN reads Latin with
-        # higher accuracy on English card fonts. We merge the signals.
-        # Running EN-only first and then detecting from its output (the old
-        # approach) never detected JA, because the EN model returns empty /
-        # Latin-garbage for JA-script regions — `detect_language` sees no
-        # JA Unicode and stays on "en".
+        # higher accuracy on English card fonts. Merge + dedupe upfront so
+        # language detection runs on the final clean text. The JA engine
+        # often hallucinates a kanji at a position where EN has Latin with
+        # higher confidence — dedupe-then-detect keeps the EN token and
+        # the hallucination never reaches `detect_language`.
         result_en = ocr_en.ocr(img_array, cls=True)
         result_ja = ocr_ja.ocr(img_array, cls=True)
 
-        def _annotate(result):
-            out = []
-            if result and result[0]:
-                for line in result[0]:
-                    pos = get_relative_position(line[0], img_w, img_h)
-                    region = classify_region(pos)
-                    out.append({"text": line[1][0], "region": region})
-            return out
+        if result_ja and result_ja[0] and result_en and result_en[0]:
+            merged_lines = deduplicate_results(list(result_ja[0]) + list(result_en[0]))
+        elif result_ja and result_ja[0]:
+            merged_lines = list(result_ja[0])
+        elif result_en and result_en[0]:
+            merged_lines = list(result_en[0])
+        else:
+            merged_lines = []
 
-        en_annotated = _annotate(result_en)
-        ja_annotated = _annotate(result_ja)
+        # Annotate the merged result for detection (include confidence so
+        # detect_language can drop JA-engine hallucinations).
+        merged_annotated = []
+        for line in merged_lines:
+            pos = get_relative_position(line[0], img_w, img_h)
+            region = classify_region(pos)
+            merged_annotated.append({
+                "text": line[1][0],
+                "confidence": line[1][1],
+                "region": region,
+            })
 
-        # Detect primarily from the JA engine — it sees the actual script.
-        # Fall back to EN annotations only when the JA engine returned nothing.
-        detected = detect_language(ja_annotated or en_annotated)
+        detected = detect_language(merged_annotated)
 
         # Thai heuristic: PaddleOCR has no TH model, so `detect_language` will
-        # never say "th" — the EN/JA engines can't output Thai Unicode. If the
-        # name region came back (nearly) empty but the number region was read,
-        # the card is probably printed in a script neither engine handles →
-        # treat as Thai so the client searches the TH catalog.
+        # never say "th" — the EN/JA engines can't output Thai Unicode. But
+        # both engines WILL produce something when shown Thai glyphs: the EN
+        # engine emits low-confidence Latin gibberish ("LecnLn", "kqllr") and
+        # the JA engine emits low-confidence kanji hallucinations. Real EN
+        # cards have a high-confidence readable name.
+        #
+        # Treat as Thai when the *actual name candidate* (excluding HP/number
+        # tokens) is low-confidence. HP and the HP value sit in the name
+        # region with conf 1.0 even on Thai cards, so we have to filter those
+        # out before looking at confidence.
         if detected == "en":
-            name_chars = sum(
-                len(t["text"].strip())
-                for t in en_annotated + ja_annotated
-                if t.get("region") == "name"
-            )
             number_chars = sum(
                 len(t["text"].strip())
-                for t in en_annotated + ja_annotated
+                for t in merged_annotated
                 if t.get("region") == "number"
             )
-            if name_chars < 3 and number_chars >= 2:
+            name_candidates = []
+            for t in merged_annotated:
+                if t.get("region") != "name":
+                    continue
+                txt = t["text"].strip()
+                if re.match(r"^\d+$", txt):           continue
+                if re.match(r"^(HP|hp)\s*\d+", txt):  continue
+                if re.match(r"^\d+\s*(HP|hp)\b", txt): continue
+                if re.fullmatch(r"(HP|hp)", txt):     continue
+                if _STAGE_RE.match(txt):              continue
+                name_candidates.append(t)
+
+            best_conf = max(
+                (c.get("confidence", 0.0) for c in name_candidates),
+                default=0.0,
+            )
+            # TH signal: number region is readable (numbers are Latin on all
+            # cards), AND the best non-HP name candidate has low confidence
+            # or there's no plausible name candidate at all. Real EN cards
+            # consistently hit ≥0.90 on the readable name.
+            if number_chars >= 2 and (not name_candidates or best_conf < 0.90):
                 detected = "th"
 
-        # Pick the result to return based on the detected language.
-        if detected == "ja" and result_ja and result_ja[0]:
-            # Merge JA + EN — JA for the name, EN for the (Latin) number/set.
-            if result_en and result_en[0]:
-                result = [deduplicate_results(list(result_ja[0]) + list(result_en[0]))]
-            else:
-                result = result_ja
-        else:
-            # EN or TH — TH uses the EN engine regardless (no Thai model).
-            result = result_en
+        result = [merged_lines]
     else:
         detected = lang
         engines = {"ja": ocr_ja, "th": ocr_th}
