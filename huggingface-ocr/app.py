@@ -563,8 +563,8 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
         else:
             merged_lines = []
 
-        # Annotate the merged result for detection (include confidence so
-        # detect_language can drop JA-engine hallucinations).
+        # Annotate the merged result for detection (include confidence + the
+        # x_center position so the TH heuristic can mirror the picker's sort).
         merged_annotated = []
         for line in merged_lines:
             pos = get_relative_position(line[0], img_w, img_h)
@@ -573,6 +573,7 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
                 "text": line[1][0],
                 "confidence": line[1][1],
                 "region": region,
+                "x_center": pos["x_center"],
             })
 
         detected = detect_language(merged_annotated)
@@ -606,15 +607,24 @@ async def ocr_card(file: UploadFile = File(...), lang: str = "auto"):
                 if _STAGE_RE.match(txt):              continue
                 name_candidates.append(t)
 
-            best_conf = max(
-                (c.get("confidence", 0.0) for c in name_candidates),
-                default=0.0,
-            )
-            # TH signal: number region is readable (numbers are Latin on all
-            # cards), AND the best non-HP name candidate has low confidence
-            # or there's no plausible name candidate at all. Real EN cards
-            # consistently hit ≥0.90 on the readable name.
-            if number_chars >= 2 and (not name_candidates or best_conf < 0.90):
+            # Mirror the picker's sort (center-first, then confidence) so the
+            # heuristic checks the SAME candidate the name extractor would
+            # choose. Using max(conf) instead picked an off-center high-conf
+            # token like "Insada" (0.96) when the actually-picked center name
+            # was "Uinueud" (0.91).
+            def _picker_key(t):
+                xc = t.get("x_center", 0.5)
+                is_center = 0.25 <= xc <= 0.75
+                return (-int(is_center), -t.get("confidence", 0.0))
+
+            picked_conf = 0.0
+            if name_candidates:
+                name_candidates.sort(key=_picker_key)
+                picked_conf = name_candidates[0].get("confidence", 0.0)
+
+            # Real EN/JA cards' picked name reads at ≥0.95 confidence; Thai
+            # glyphs read as Latin gibberish that tops out around 0.90–0.94.
+            if number_chars >= 2 and (not name_candidates or picked_conf < 0.95):
                 detected = "th"
 
         result = [merged_lines]
