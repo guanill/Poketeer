@@ -4,12 +4,13 @@
  * Pipeline:
  *   1. Send image to PaddleOCR HF Space → get card name, number, set code
  *   2. Fallback: client-side Tesseract.js multi-pass OCR
- *   3. Search by number first (most accurate), then fuzzy name search
- *   4. Optional: if cloud embedding model is up, boost/merge with visual matches
+ *   3. Search by number and name independently, then rank by combined evidence
+ *   4. Use visual similarity as corroborating evidence rather than a standalone answer
  */
 
 import { supabase } from '../lib/supabase';
 import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
+import { mergeScanMatches, rankNumberMatches } from './scanRanking';
 
 // HF Space URLs
 const HF_SPACE_URL = 'https://agm3000-poketeer-card-embedder.hf.space';
@@ -24,6 +25,24 @@ interface PaddleOcrResult {
   set_code: string;
   detected_lang?: 'en' | 'ja' | 'th';
   all_text: Array<{ text: string; confidence: number; region: string; position: { y_center: number; x_center: number } }>;
+}
+
+function extractPaddleCardNumber(result: PaddleOcrResult): string | null {
+  const footerText = (result.all_text ?? [])
+    .filter(item => item.region === 'number' || item.position?.y_center >= 0.8)
+    .sort((a, b) => a.position.y_center - b.position.y_center)
+    .map(item => item.text)
+    .join(' ');
+
+  return extractCardNumber(footerText, true)
+    || extractStructuredCardNumber(result.number);
+}
+
+function extractStructuredCardNumber(value: string): string | null {
+  const normalized = value.trim().replace(/^0+(?=\d)/, '');
+  return /^[A-Za-z]{1,4}\d{1,4}$/.test(normalized) || /^\d{1,4}$/.test(normalized)
+    ? normalized
+    : null;
 }
 
 // ── HF Space warm-up ────────────────────────────────────────────────────────
@@ -184,7 +203,7 @@ async function ocrMultiPass(
 // ── Text extraction helpers ──────────────────────────────────────────────────
 
 /** Extract a card number like "4/102", "025/172", "SWSH025" from OCR text. */
-function extractCardNumber(text: string): string | null {
+function extractCardNumber(text: string, allowFooterCode = false): string | null {
   // First try matching on the raw text (before aggressive substitutions)
   const raw = text.replace(/[—–-]+/g, '/').replace(/\s+/g, ' ');
 
@@ -205,22 +224,27 @@ function extractCardNumber(text: string): string | null {
   const slashFixed = cleaned.match(/([A-Za-z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Za-z0-9]+/);
   if (slashFixed) return slashFixed[1].replace(/^0+(?=\d)/, '').toLowerCase();
 
-  // Pattern C: standalone promo codes like "SWSH025"
-  const promoMatch = raw.match(/\b([A-Z]{2,4}\d{3,4})\b/i);
-  if (promoMatch) return promoMatch[1].replace(/^0+(?=\d)/, '').toLowerCase();
+  if (allowFooterCode) {
+    // Alphanumeric collector numbers (e.g. TG30, GG01, SWSH025) are printed
+    // in the footer alongside the numeric "number/total" format.
+    const collectorCode = raw.match(/\b([A-Z]{1,4}\d{1,4})\b/i);
+    if (collectorCode) return collectorCode[1].toLowerCase();
 
-  // Pattern D: just a number (last resort)
-  const anyNum = raw.match(/\b(\d{1,4})\b/);
-  if (anyNum && anyNum[1].length >= 1) return anyNum[1].replace(/^0+(?=\d)/, '');
+    // Only accept a bare number when OCR was run on the isolated card-number crop.
+    const bareNumber = raw.match(/^\s*[#№]?\s*(\d{1,4})\s*$/m);
+    if (bareNumber) return bareNumber[1].replace(/^0+(?=\d)/, '');
+  }
 
   return null;
 }
 
 /** Extract a set code/abbreviation from OCR text (e.g. "SV6", "S12a", "MEW"). */
-function extractSetHint(text: string): string {
-  // Common patterns: "SV6", "S12a", "SM12", "MEW", "sv6pt5" etc.
-  const m = text.match(/\b([A-Za-z]{1,4}\d{1,3}[a-z]{0,3})\b/);
-  return m ? m[1] : '';
+function extractSetHint(text: string, cardNumber = ''): string {
+  const patterns = /\b(?:SV\d{1,2}(?:PT\d)?|S\d{1,2}[A-Z]{0,2}|SM\d{1,2}[A-Z+]{0,2}|XY\d{1,2}[A-Z]{0,2}|BW\d{1,2}[A-Z]{0,2}|SWSH\d{0,3}|MEW|SVP|SMP\d?|SC\d[A-Z]?|MA\d|PCG\d{1,2}|ADV\d{1,2}|CP\d{1,2}|L\d[A-Z]?)\b/ig;
+  const numberKey = cardNumber.toUpperCase();
+  return [...text.matchAll(patterns)]
+    .map(match => match[0])
+    .find(candidate => candidate.toUpperCase() !== numberKey) ?? '';
 }
 
 /** Lines that are card metadata, not the card name. */
@@ -322,82 +346,6 @@ function nameSearchVariants(name: string): string[] {
 
 // ── Fuzzy string matching ────────────────────────────────────────────────────
 
-/** Levenshtein edit distance between two strings. */
-function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
-
-/**
- * Fuzzy similarity between two strings (0–1, higher = more similar).
- * Combines edit distance, substring matching, and prefix matching.
- */
-function fuzzySimilarity(a: string, b: string): number {
-  const la = a.toLowerCase();
-  const lb = b.toLowerCase();
-  if (la === lb) return 1;
-
-  const maxLen = Math.max(la.length, lb.length);
-  if (maxLen === 0) return 1;
-
-  // Normalized edit distance score
-  const dist = editDistance(la, lb);
-  const editScore = 1 - dist / maxLen;
-
-  // Substring bonus: if one contains the other
-  if (la.includes(lb) || lb.includes(la)) return Math.max(editScore, 0.9);
-
-  // Prefix bonus: first N chars match (common with OCR cutting off end of name)
-  const prefixLen = Math.min(la.length, lb.length, 5);
-  if (prefixLen >= 3 && la.slice(0, prefixLen) === lb.slice(0, prefixLen)) {
-    return Math.max(editScore, 0.75);
-  }
-
-  // Token overlap bonus: "Iron Valiant" vs "Ironvaliant" or word reordering
-  const tokensA = new Set(la.split(/[\s\-]+/).filter(t => t.length > 1));
-  const tokensB = new Set(lb.split(/[\s\-]+/).filter(t => t.length > 1));
-  if (tokensA.size > 0 && tokensB.size > 0) {
-    let overlap = 0;
-    for (const t of tokensA) if (tokensB.has(t)) overlap++;
-    const tokenScore = overlap / Math.max(tokensA.size, tokensB.size);
-    if (tokenScore >= 0.5) return Math.max(editScore, 0.65 + tokenScore * 0.3);
-  }
-
-  return editScore;
-}
-
-/** Score how well an OCR name hint matches a card name. Returns 0–0.99. */
-function nameMatchScore(hint: string, cardName: string, cardNameEn: string): number {
-  // Try both the raw hint and its base name (without suffix)
-  const { cleaned, baseName } = cleanOcrName(hint);
-  const candidates = baseName ? [cleaned, baseName] : [cleaned];
-
-  let bestSim = 0;
-  for (const candidate of candidates) {
-    bestSim = Math.max(
-      bestSim,
-      fuzzySimilarity(candidate, cardName),
-      cardNameEn ? fuzzySimilarity(candidate, cardNameEn) : 0,
-    );
-  }
-
-  if (bestSim >= 0.90) return 0.99;
-  if (bestSim >= 0.75) return 0.90;
-  if (bestSim >= 0.60) return 0.70;
-  if (bestSim >= 0.45) return 0.50;
-  return 0.20;  // Very different name
-}
-
 // ── Supabase search helpers ──────────────────────────────────────────────────
 
 /** Convert DB rows to ScanMatch objects. */
@@ -421,21 +369,25 @@ function rowsToMatches(rows: Array<Record<string, unknown>>): ScanMatch[] {
   }));
 }
 
-/** Build number variants: exact, zero-padded, and nearby (±1, ±2). */
+function normalizeCardNumber(value: string): string {
+  const normalized = value.replace(/\s+/g, '').toUpperCase();
+  return /^\d+$/.test(normalized) ? normalized.replace(/^0+(?=\d)/, '') : normalized;
+}
+
+/** Build exact and numeric-neighbor variants without stripping promo prefixes. */
 function buildNumberVariants(cardNumber: string): { exact: string[]; nearby: string[] } {
-  const exact = new Set<string>([cardNumber]);
-  const numOnly = cardNumber.replace(/\D/g, '');
+  const exact = new Set<string>([cardNumber, cardNumber.toUpperCase()]);
+  const numOnly = /^\d+$/.test(cardNumber) ? cardNumber : '';
   if (numOnly.length > 0) {
     exact.add(numOnly);
     exact.add(numOnly.padStart(3, '0'));
     exact.add(numOnly.padStart(2, '0'));
   }
 
-  // Nearby: ±1 and ±2 from the OCR number (handles off-by-one misreads)
   const nearby = new Set<string>();
   const n = parseInt(numOnly, 10);
   if (!isNaN(n)) {
-    for (const offset of [-2, -1, 1, 2]) {
+    for (const offset of [-1, 1]) {
       const adj = n + offset;
       if (adj > 0) {
         nearby.add(String(adj));
@@ -443,8 +395,11 @@ function buildNumberVariants(cardNumber: string): { exact: string[]; nearby: str
       }
     }
   }
-  // Remove any that are already in exact
-  for (const e of exact) nearby.delete(e);
+  for (const e of exact) {
+    for (const candidate of nearby) {
+      if (normalizeCardNumber(candidate) === normalizeCardNumber(e)) nearby.delete(candidate);
+    }
+  }
 
   return { exact: [...exact], nearby: [...nearby] };
 }
@@ -458,7 +413,7 @@ function resolveSetIds(setHint: string, lang: ScanLanguage): string[] {
   return [`${hint}${langSuffix}`];
 }
 
-/** Search cards by number + optional name hint. Tries multiple number formats. */
+/** Search exact and nearby numbers, then rank candidates against all OCR evidence. */
 async function searchByNumber(
   cardNumber: string,
   nameHint: string,
@@ -472,227 +427,52 @@ async function searchByNumber(
   const langFilter = lang === 'ja' ? 'ja' : lang === 'th' ? 'th' : 'en';
   const { cleaned: cleanedName, baseName } = cleanOcrName(nameHint);
   const nameVariants = [cleanedName, ...(baseName ? [baseName] : [])].filter(n => n.length >= 2);
-
-  // Strategy 0: Direct set_id + number lookup (batch with .in())
   const setIds = resolveSetIds(setHint, lang);
-  if (setIds.length > 0 && exact.length > 0) {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*, sets!inner(id, name, series, language)')
-      .in('set_id', setIds)
-      .in('number', exact)
-      .limit(10);
+  const selectCards = () => supabase
+    .from('cards')
+    .select('*, sets!inner(id, name, series, language)');
 
-    if (!error && data && data.length > 0) {
-      const results = rowsToMatches(data);
-      for (const r of results) r.confidence = 0.99;
-      if (nameVariants.length > 0) {
-        for (const r of results) {
-          const score = nameMatchScore(nameVariants[0], r.name, r.name_en ?? '');
-          r.confidence = Math.max(0.90, score);
-        }
-      }
-      results.sort((a, b) => b.confidence - a.confidence);
-      return results.slice(0, topK);
-    }
-  }
-
-  // Strategy 1: name + number together (single query with .or() for name/name_en)
-  if (nameVariants.length > 0) {
-    // Generate OCR char-correction variants for broader matching
-    const allNameSearchTerms = new Set<string>();
-    for (const nv of nameVariants) {
-      for (const v of nameSearchVariants(nv)) allNameSearchTerms.add(v);
-    }
-
-    // Build or-filter: match name OR name_en for each variant
-    for (const nameVar of allNameSearchTerms) {
-      const orFilter = lang !== 'en'
-        ? `name.ilike.%${nameVar}%,name_en.ilike.%${nameVar}%`
-        : `name.ilike.%${nameVar}%`;
-
-      // Try exact numbers (batch with .in())
-      {
-        const { data, error } = await supabase
-          .from('cards')
-          .select('*, sets!inner(id, name, series, language)')
-          .in('number', exact)
-          .or(orFilter)
-          .eq('sets.language', langFilter)
-          .limit(topK);
-
-        if (!error && data && data.length > 0) {
-          const results = rowsToMatches(data);
-          for (const r of results) r.confidence = 0.97;
-          applySetHint(results, setHint);
-          results.sort((a, b) => b.confidence - a.confidence);
-          return results.slice(0, topK);
-        }
-      }
-
-      // Try nearby numbers (batch with .in())
-      if (nearby.length > 0) {
-        const { data, error } = await supabase
-          .from('cards')
-          .select('*, sets!inner(id, name, series, language)')
+  const exactQueries = [
+    selectCards().in('number', exact).eq('sets.language', langFilter).limit(200),
+    ...(setIds.length > 0
+      ? [selectCards().in('set_id', setIds).in('number', exact).limit(20)]
+      : []),
+  ];
+  const nearbyQueries = nearby.length > 0 && nameVariants.length > 0
+    ? [...new Set(nameVariants.flatMap(nameSearchVariants))].map(term => {
+        const orFilter = lang === 'en'
+          ? `name.ilike.%${term}%`
+          : `name.ilike.%${term}%,name_en.ilike.%${term}%`;
+        return selectCards()
           .in('number', nearby)
           .or(orFilter)
           .eq('sets.language', langFilter)
-          .limit(topK);
+          .limit(50);
+      })
+    : [];
+  const [exactResponses, nearbyResponses] = await Promise.all([
+    Promise.all(exactQueries),
+    Promise.all(nearbyQueries),
+  ]);
+  const exactRows = exactResponses.flatMap(({ data, error }) => !error && data ? data : []);
+  const nearbyRows = nearbyResponses.flatMap(({ data, error }) => !error && data ? data : []);
+  const candidates = [...rowsToMatches(exactRows), ...rowsToMatches(nearbyRows)];
 
-        if (!error && data && data.length > 0) {
-          const results = rowsToMatches(data);
-          for (const r of results) r.confidence = 0.92;
-          applySetHint(results, setHint);
-          results.sort((a, b) => b.confidence - a.confidence);
-          return results.slice(0, topK);
-        }
-      }
-    }
-  }
+  if (candidates.length === 0) return [];
 
-  // Strategy 1.5: No name but we have HP — use number + HP as a strong filter
-  if (nameVariants.length === 0 && hpHint) {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*, sets!inner(id, name, series, language)')
-      .in('number', exact)
-      .eq('hp', hpHint)
-      .eq('sets.language', langFilter)
-      .limit(topK);
+  const unique = new Map<string, ScanMatch>();
+  for (const candidate of candidates) unique.set(candidate.id, candidate);
 
-    if (!error && data && data.length > 0) {
-      const results = rowsToMatches(data);
-      for (const r of results) r.confidence = 0.94; // number + HP match
-      applySetHint(results, setHint);
-      applySupertypeHint(results, supertypeHint);
-      results.sort((a, b) => b.confidence - a.confidence);
-      return results.slice(0, topK);
-    }
-  }
+  const ranked = rankNumberMatches([...unique.values()], {
+    cardNumber,
+    setHint,
+    nameHints: nameVariants,
+    hpHint,
+    supertypeHint,
+    nearbyNumbers: nearby,
+  });
 
-  // Strategy 2 + 3: Fetch exact and nearby numbers in PARALLEL, rank by name.
-  const exactPromise = (async () => {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*, sets!inner(id, name, series, language)')
-      .in('number', exact)
-      .eq('sets.language', langFilter)
-      .limit(100);
-    return (!error && data) ? data : [] as Array<Record<string, unknown>>;
-  })();
-
-  const nearbyPromise = (async () => {
-    if (nameVariants.length === 0) return [] as Array<Record<string, unknown>>;
-    const rows: Array<Record<string, unknown>> = [];
-    // Fetch all nearby numbers in parallel
-    const nearbyResults = await Promise.all(
-      nearby.map(num =>
-        supabase
-          .from('cards')
-          .select('*, sets!inner(id, name, series, language)')
-          .eq('number', num)
-          .eq('sets.language', langFilter)
-          .limit(50)
-      )
-    );
-    for (const { data, error } of nearbyResults) {
-      if (!error && data) rows.push(...data);
-    }
-    return rows;
-  })();
-
-  const [allRows, nearbyRows] = await Promise.all([exactPromise, nearbyPromise]);
-
-  if (allRows.length === 0 && nearbyRows.length === 0) return [];
-
-  const exactResults = rowsToMatches(allRows);
-  const nearbyResults = rowsToMatches(nearbyRows);
-
-  // Rank by fuzzy name match
-  if (nameVariants.length > 0) {
-    const hint = nameVariants[0];
-    for (const r of exactResults) {
-      r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '');
-    }
-    for (const r of nearbyResults) {
-      r.confidence = nameMatchScore(hint, r.name, r.name_en ?? '') * 0.95;
-    }
-  }
-
-  // Merge exact + nearby, deduplicate by card ID
-  const merged = new Map<string, ScanMatch>();
-  for (const r of exactResults) merged.set(r.id, r);
-  for (const r of nearbyResults) {
-    if (!merged.has(r.id)) merged.set(r.id, r);
-  }
-
-  const results = [...merged.values()];
-  applySetHint(results, setHint);
-  applyHpHint(results, hpHint, nameVariants.length > 0);
-  applySupertypeHint(results, supertypeHint);
-  results.sort((a, b) => b.confidence - a.confidence);
-  return results.slice(0, topK);
-}
-
-/** Boost confidence for cards matching the OCR set code; penalize non-matches. */
-function applySetHint(results: ScanMatch[], setHint: string): void {
-  if (!setHint || setHint.length < 2) return;
-  const hint = setHint.toLowerCase();
-
-  // Count how many results match the set hint — if many match, the hint is strong
-  let matchCount = 0;
-  for (const r of results) {
-    const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
-    if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) matchCount++;
-  }
-  const hasStrongHint = matchCount > 0;
-
-  for (const r of results) {
-    const setCode = r.set_id.replace(/-(?:en|ja|th)$/, '').toLowerCase();
-    if (setCode === hint || setCode.startsWith(hint) || hint.startsWith(setCode)) {
-      // Exact set match — strong boost
-      r.confidence = Math.min(0.99, r.confidence + 0.10);
-    } else {
-      const sname = r.set_name.toLowerCase();
-      if (sname.includes(hint) || hint.includes(sname)) {
-        // Set name partial match — small boost
-        r.confidence = Math.min(0.99, r.confidence + 0.04);
-      } else if (hasStrongHint) {
-        // Wrong set when we have a confident match — penalize
-        r.confidence = Math.max(0.10, r.confidence * 0.80);
-      }
-    }
-  }
-}
-
-/** Boost/penalize results based on HP match. Stronger when no name hint. */
-function applyHpHint(results: ScanMatch[], hpHint: string, hasName: boolean): void {
-  if (!hpHint) return;
-  // When there's no name, HP is one of the few signals — make it count
-  const boost = hasName ? 0.05 : 0.12;
-  const penalty = hasName ? 0.92 : 0.65;
-  for (const r of results) {
-    if (r.hp === hpHint) {
-      r.confidence = Math.min(0.99, r.confidence + boost);
-    } else if (r.hp && r.hp !== hpHint) {
-      r.confidence = Math.max(0.10, r.confidence * penalty);
-    }
-    // No HP on card (Trainer/Energy) — no change
-  }
-}
-
-/** Filter/penalize results that don't match detected supertype. */
-function applySupertypeHint(results: ScanMatch[], supertypeHint: string): void {
-  if (!supertypeHint) return;
-  for (const r of results) {
-    if (r.supertype === supertypeHint) {
-      r.confidence = Math.min(0.99, r.confidence + 0.03);
-    } else {
-      // Wrong supertype — strong penalty (Trainer vs Pokémon is a clear signal)
-      r.confidence = Math.max(0.10, r.confidence * 0.60);
-    }
-  }
+  return ranked.slice(0, topK);
 }
 
 /** Search cards by fuzzy name match. */
@@ -800,37 +580,14 @@ async function tryVisualMatch(
   }
 }
 
-/** Merge OCR and visual results — if both agree on a card, boost confidence. */
-function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK: number): ScanMatch[] {
-  const merged = new Map<string, ScanMatch>();
-
-  for (const m of ocrMatches) {
-    merged.set(m.id, { ...m });
-  }
-
-  for (const m of visualMatches) {
-    const existing = merged.get(m.id);
-    if (existing) {
-      existing.confidence = Math.min(0.99, existing.confidence + m.confidence * 0.3);
-      existing.method = 'ocr+visual';
-    } else {
-      merged.set(m.id, { ...m });
-    }
-  }
-
-  return [...merged.values()]
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, topK);
-}
-
 // ── Main scan ────────────────────────────────────────────────────────────────
 
 /**
  * Scan a card image:
  *   1. Try PaddleOCR (HF Space) — best accuracy
  *   2. Fallback: client-side Tesseract.js multi-pass OCR
- *   3. Search by number (most accurate) or fuzzy name search
- *   4. Optionally boost with visual embedding if cloud model is available
+ *   3. Search by number and name independently and rank all candidate evidence
+ *   4. Use visual similarity as corroborating evidence when available
  */
 export async function supabaseScan(
   imageFile: File | Blob,
@@ -851,9 +608,11 @@ export async function supabaseScan(
 
   if (paddleResult && (paddleResult.name || paddleResult.number)) {
     usedPaddle = true;
-    cardNumber = paddleResult.number || null;
+    cardNumber = extractPaddleCardNumber(paddleResult);
     nameQuery = paddleResult.name;
-    setHint = paddleResult.set_code;
+    setHint = normalizeCardNumber(paddleResult.set_code) === normalizeCardNumber(cardNumber ?? '')
+      ? ''
+      : paddleResult.set_code;
 
     // Extract extra signals from all_text
     if (paddleResult.all_text) {
@@ -878,7 +637,7 @@ export async function supabaseScan(
       }
     }
 
-    ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${paddleResult.number} | set: ${paddleResult.set_code} | lang: ${effectiveLang}`;
+    ocrText = `[PaddleOCR] name: ${paddleResult.name} | number: ${cardNumber ?? ''} | set: ${paddleResult.set_code} | lang: ${effectiveLang}`;
     if (paddleResult.name_en) ocrText += ` | name_en: ${paddleResult.name_en}`;
     if (hpHint) ocrText += ` | hp: ${hpHint}`;
     if (supertypeHint) ocrText += ` | type: ${supertypeHint}`;
@@ -912,11 +671,11 @@ export async function supabaseScan(
     const numberText = numberResult.text;
     ocrText = numberText ? `${nameText}\n[bottom] ${numberText}` : nameText;
 
-    cardNumber = extractCardNumber(numberText)
+    cardNumber = extractCardNumber(numberText, true)
       || extractCardNumber(nameText)
       || extractCardNumber(nameText + ' ' + numberText);
     nameQuery = extractNameQuery(nameText, lang);
-    setHint = extractSetHint(numberText);
+    setHint = extractSetHint(numberText, cardNumber ?? '');
 
     console.log('[scan] Tesseract name:', JSON.stringify(nameText), `(conf: ${nameResult.confidence})`);
     console.log('[scan] Tesseract number:', JSON.stringify(numberText), `(conf: ${numberResult.confidence})`);
@@ -927,25 +686,32 @@ export async function supabaseScan(
   // Clean OCR name before searching
   const { cleaned: cleanedNameQuery, baseName: baseNameQuery } = cleanOcrName(nameQuery);
 
-  // 4. Search by number first (most reliable), then by name
-  let ocrMatches: ScanMatch[] = [];
-
-  if (cardNumber) {
-    ocrMatches = await searchByNumber(cardNumber, cleanedNameQuery, topK, effectiveLang, setHint, hpHint, supertypeHint);
+  // Search by number and name independently: an OCR number can be wrong even
+  // when the name is readable, so neither signal should hide the other.
+  const nameQueries = [...new Set([cleanedNameQuery, baseNameQuery].filter(
+    name => effectiveLang === 'ja' ? name.length >= 1 : name.length >= 2,
+  ))];
+  const [numberMatches, ...nameResultGroups] = await Promise.all([
+    cardNumber
+      ? searchByNumber(cardNumber, cleanedNameQuery, topK * 3, effectiveLang, setHint, hpHint, supertypeHint)
+      : Promise.resolve([] as ScanMatch[]),
+    ...nameQueries
+      .map(name => searchByName(name, topK * 3, effectiveLang)),
+  ]);
+  const candidateMap = new Map<string, ScanMatch>();
+  for (const match of [...numberMatches, ...nameResultGroups.flat()]) {
+    const previous = candidateMap.get(match.id);
+    if (!previous || previous.confidence < match.confidence) candidateMap.set(match.id, match);
   }
-
-  // Fallback: try base name without suffix (e.g. "Charizard" from "Charizard ex")
-  if (ocrMatches.length === 0 && baseNameQuery && cardNumber) {
-    ocrMatches = await searchByNumber(cardNumber, baseNameQuery, topK, effectiveLang, setHint, hpHint, supertypeHint);
-  }
-
-  if (ocrMatches.length === 0 && cleanedNameQuery.length >= 1) {
-    ocrMatches = await searchByName(cleanedNameQuery, topK, effectiveLang);
-    // If that fails, try base name
-    if (ocrMatches.length === 0 && baseNameQuery) {
-      ocrMatches = await searchByName(baseNameQuery, topK, effectiveLang);
-    }
-  }
+  const numberVariants = cardNumber ? buildNumberVariants(cardNumber) : { nearby: [] as string[] };
+  let ocrMatches = rankNumberMatches([...candidateMap.values()], {
+    cardNumber: cardNumber ?? '',
+    setHint,
+    nameHints: nameQueries,
+    hpHint,
+    supertypeHint,
+    nearbyNumbers: numberVariants.nearby,
+  }).slice(0, topK);
 
   // If auto-detected language found nothing, retry with other languages
   if (ocrMatches.length === 0 && usedPaddle && cardNumber) {
@@ -964,7 +730,7 @@ export async function supabaseScan(
   if (ocrMatches.length === 0 && !usedPaddle) {
     try {
       const wideBottom = await ocrMultiPass(imageFile, 0.75, 1, 3, NUMBER_PROFILES, effectiveLang);
-      const wideNumber = extractCardNumber(wideBottom.text);
+      const wideNumber = extractCardNumber(wideBottom.text, true);
       if (wideNumber) {
         ocrMatches = await searchByNumber(wideNumber, nameQuery, topK, effectiveLang);
       }
@@ -989,9 +755,7 @@ export async function supabaseScan(
   // 4. Await visual results and merge
   const visualMatches = await visualPromise;
 
-  const matches = visualMatches.length > 0
-    ? mergeResults(ocrMatches, visualMatches, topK)
-    : ocrMatches;
+  const matches = mergeScanMatches(ocrMatches, visualMatches, topK);
 
   // Enrich non-English matches with English names
   if (effectiveLang !== 'en' && matches.length > 0) {

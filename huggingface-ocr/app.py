@@ -446,27 +446,42 @@ def extract_card_info(ocr_results, img_w, img_h):
     # Collect all bottom text for combined analysis
     bottom_combined = " ".join(t["text"] for t in number_texts)
 
-    # Pattern: "025/172" or "25/172" — with OCR misread corrections
+    # Preserve alphabetic collector-number prefixes such as TG30, GG01,
+    # and SWSH025 instead of reducing them to only their numeric suffix.
     corrected = bottom_combined.replace("O", "0").replace("o", "0").replace("l", "1").replace("I", "1")
-    num_match = re.search(r"(\d{1,4})\s*[/\\|]\s*(\d{1,4})", corrected)
+    num_match = re.search(
+        r"([A-Za-z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Za-z]{0,4}\d{1,4}",
+        corrected,
+    )
     if num_match:
-        card_number = num_match.group(1).lstrip("0") or "0"
+        card_number = num_match.group(1)
+        if not re.search(r"[A-Za-z]", card_number):
+            card_number = card_number.lstrip("0") or "0"
 
     # Try each text block individually if combined didn't work
     if not card_number:
         for t in number_texts:
             txt = t["text"]
             corrected_txt = txt.replace("O", "0").replace("o", "0").replace("l", "1").replace("I", "1")
-            m = re.search(r"(\d{1,4})\s*[/\\|]\s*(\d{1,4})", corrected_txt)
+            m = re.search(
+                r"([A-Za-z]{0,4}\d{1,4})\s*[/\\|]\s*[A-Za-z]{0,4}\d{1,4}",
+                corrected_txt,
+            )
             if m:
-                card_number = m.group(1).lstrip("0") or "0"
+                card_number = m.group(1)
+                if not re.search(r"[A-Za-z]", card_number):
+                    card_number = card_number.lstrip("0") or "0"
                 break
 
     # Bare number fallback
     if not card_number:
         for t in number_texts:
             txt = t["text"]
+            collector_code = re.search(r"\b([A-Za-z]{1,4}\d{1,4})\b", txt)
             bare = re.search(r"\b(\d{1,4})\b", txt)
+            if collector_code:
+                card_number = collector_code.group(1)
+                break
             if bare:
                 card_number = bare.group(1).lstrip("0") or "0"
                 break
@@ -488,6 +503,9 @@ def extract_card_info(ocr_results, img_w, img_h):
                     break
             if set_code:
                 break
+
+    if card_number and set_code.lower() == card_number.lower():
+        set_code = ""
 
     return {
         "name": card_name,

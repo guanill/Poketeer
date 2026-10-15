@@ -31,6 +31,35 @@ const _byId: Record<string, PokemonCard> = {};
 // Pre-grouped cards by normalized card number for number-based lookup
 const _byNumber: Record<string, PokemonCard[]> = {};
 
+function nameSimilarity(a: string, b: string): number {
+  const normalize = (value: string) => value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+  const left = normalize(a);
+  const right = normalize(b);
+  if (left === right) return 1;
+  if (!left || !right) return 0;
+  if (left.includes(right) || right.includes(left)) {
+    return Math.min(left.length, right.length) / Math.max(left.length, right.length);
+  }
+
+  let previous = Array.from({ length: right.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= left.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j++) {
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
 async function loadCatalog(): Promise<Catalog> {
   if (_catalog) return _catalog;
   if (_loading) return _loading;
@@ -172,20 +201,13 @@ export const catalogService = {
     const candidates = _byNumber[key] ?? [];
     if (candidates.length === 0) return [];
 
-    // If we have a name hint, sort by name similarity
-    let ranked = candidates;
-    if (nameHint && _fuse) {
-      const hint = nameHint.toLowerCase();
-      ranked = [...candidates].sort((a, b) => {
-        const aScore = a.name.toLowerCase().startsWith(hint) ? 0
-          : a.name.toLowerCase().includes(hint) ? 0.3 : 0.7;
-        const bScore = b.name.toLowerCase().startsWith(hint) ? 0
-          : b.name.toLowerCase().includes(hint) ? 0.3 : 0.7;
-        return aScore - bScore;
-      });
-    }
+    const ranked = nameHint
+      ? candidates
+        .map(card => ({ card, similarity: nameSimilarity(nameHint, card.name) }))
+        .sort((a, b) => b.similarity - a.similarity)
+      : candidates.map(card => ({ card, similarity: 0 }));
 
-    return ranked.slice(0, topK).map((card, i) => ({
+    return ranked.slice(0, topK).map(({ card, similarity }) => ({
       id: card.id,
       name: card.name,
       number: card.number,
@@ -198,7 +220,7 @@ export const catalogService = {
       subtypes: card.subtypes ?? [],
       hp: card.hp ?? '',
       artist: card.artist ?? '',
-      confidence: Math.max(0.55, 0.9 - i * 0.05),
+      confidence: nameHint ? 0.35 + similarity * 0.6 : 0.68,
       method: 'ocr',
     }));
   },

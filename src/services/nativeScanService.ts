@@ -8,13 +8,14 @@
  *  2. Multiple preprocessing passes with different contrast/brightness levels
  *     to handle foil, holo, full-art, and normal card surfaces
  *  3. Tesseract.js OCR on both crops (worker + data bundled in APK)
- *  4. Number lookup (most accurate) -> name fuzzy-match fallback -- 100% offline
+ *  4. Independently match number and name, then rank their combined evidence -- offline
  *
  *  If a backend URL is configured and reachable, uses the server's
  *  ResNet50 + EasyOCR pipeline instead (much more accurate).
  */
 import { createWorker } from 'tesseract.js';
 import type { ScanMatch, ScanResult, ScanLanguage } from './cardScanService';
+import { mergeScanMatches, rankNumberMatches } from './scanRanking';
 import { catalogService } from './catalogService';
 import { visualMatchService } from './visualMatchService';
 
@@ -303,33 +304,6 @@ async function ocrMultiPass(
   return bestResult;
 }
 
-// ── Merge OCR + Visual results ────────────────────────────────────────────────
-
-function mergeResults(ocrMatches: ScanMatch[], visualMatches: ScanMatch[], topK: number): ScanMatch[] {
-  const merged = new Map<string, ScanMatch>();
-
-  // Visual matches are the primary signal
-  for (const m of visualMatches) {
-    merged.set(m.id, { ...m, method: 'visual' });
-  }
-
-  // OCR matches boost confidence if they agree, or add new candidates
-  for (const m of ocrMatches) {
-    const existing = merged.get(m.id);
-    if (existing) {
-      // Both OCR and visual agree -- boost confidence significantly
-      existing.confidence = Math.min(0.99, existing.confidence + m.confidence * 0.3);
-      existing.method = 'ocr+visual';
-    } else {
-      merged.set(m.id, { ...m });
-    }
-  }
-
-  return [...merged.values()]
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, topK);
-}
-
 // ── Main scan ─────────────────────────────────────────────────────────────────
 export async function nativeScanCard(imageFile: File | Blob, topK = 5, lang: ScanLanguage = 'en'): Promise<ScanResult> {
   // Try backend first if configured (much more accurate)
@@ -355,28 +329,33 @@ export async function nativeScanCard(imageFile: File | Blob, topK = 5, lang: Sca
     const nameCandidates = extractNameCandidates(ocrText, lang);
     const nameHint = nameCandidates[0] ?? '';
 
-    let ocrMatches: ScanMatch[] = [];
-
-    if (cardNumber) {
-      ocrMatches = await catalogService.searchByNumber(cardNumber, nameHint, topK);
+    const [numberMatches, ...nameResultGroups] = await Promise.all([
+      cardNumber
+        ? catalogService.searchByNumber(cardNumber, nameHint, topK * 3)
+        : Promise.resolve([] as ScanMatch[]),
+      ...nameCandidates.slice(0, 5)
+        .map(candidate => catalogService.fuzzySearchByName(candidate, topK * 3)),
+    ]);
+    const candidates = new Map<string, ScanMatch>();
+    for (const match of [...numberMatches, ...nameResultGroups.flat()]) {
+      const previous = candidates.get(match.id);
+      if (!previous || previous.confidence < match.confidence) candidates.set(match.id, match);
     }
-
-    if (ocrMatches.length === 0 && nameCandidates.length > 0) {
-      let bestMatches: ScanMatch[] = [];
-      let bestTopConfidence = 0;
-      for (const candidate of nameCandidates.slice(0, 5)) {
-        const results = await catalogService.fuzzySearchByName(candidate, topK);
-        if (results.length > 0) {
-          const topConf = results[0].confidence;
-          if (topConf > bestTopConfidence) {
-            bestMatches = results;
-            bestTopConfidence = topConf;
-          }
-          if (topConf > 0.75) break;
-        }
-      }
-      ocrMatches = bestMatches;
+    let nearbyNumbers: string[] = [];
+    if (cardNumber && /^\d+$/.test(cardNumber)) {
+      const number = Number(cardNumber);
+      nearbyNumbers = [number - 1, number + 1]
+        .filter(value => value > 0)
+        .flatMap(value => [String(value), String(value).padStart(3, '0')]);
     }
+    const ocrMatches = rankNumberMatches([...candidates.values()], {
+      cardNumber: cardNumber ?? '',
+      setHint: '',
+      nameHints: nameCandidates.slice(0, 5),
+      hpHint: '',
+      supertypeHint: '',
+      nearbyNumbers,
+    }).slice(0, topK);
 
     const combinedOcr = bottomText ? `${ocrText}\n[bottom] ${bottomText}` : ocrText;
     return { ocrMatches, ocrText: combinedOcr };
@@ -387,7 +366,7 @@ export async function nativeScanCard(imageFile: File | Blob, topK = 5, lang: Sca
   ]);
 
   // Merge results from both pipelines
-  const matches = mergeResults(ocrMatches, visualMatches, topK);
+  const matches = mergeScanMatches(ocrMatches, visualMatches, topK);
 
   const methodUsed = visualMatches.length > 0 && ocrMatches.length > 0
     ? 'combined'

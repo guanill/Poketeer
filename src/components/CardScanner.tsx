@@ -130,9 +130,12 @@ function JobCard({
   const topMatch = job.matches[0];
 
   const needsManual = job.status === 'done' &&
-    (job.matches.length === 0 || (topMatch?.confidence ?? 0) < 0.5);
+    (job.matches.length === 0 ||
+      (topMatch?.confidence ?? 0) < 0.62 ||
+      (job.matches.length > 1 && topMatch.confidence - job.matches[1].confidence < 0.04));
   const rawOcrText = job.result?.ocr_text ?? '';
-  const ocrHint = rawOcrText.split('\n[bottom]')[0].split('\n').find(l => l.trim().length > 1) ?? '';
+  const paddleName = rawOcrText.match(/\[PaddleOCR\] name: (.*?) \| number:/)?.[1];
+  const ocrHint = paddleName || rawOcrText.split('\n[bottom]')[0].split('\n').find(l => l.trim().length > 1) || '';
   const [manualQuery, setManualQuery] = useState(ocrHint);
   const [manualMatches, setManualMatches] = useState<ScanMatch[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -223,7 +226,7 @@ function JobCard({
                 : topMatch.confidence >= 0.5 ? 'text-amber-400'
                 : 'text-red-400'
               }`}>
-                {Math.round(topMatch.confidence * 100)}% match
+                {Math.round(topMatch.confidence * 100)}% match score
               </span>
               {job.matches.length > 1 && (
                 <span className="text-[10px] text-gray-600">+{job.matches.length - 1} others</span>
@@ -231,7 +234,7 @@ function JobCard({
             </div>
           )}
           {needsManual && (
-            <p className="text-[10px] text-amber-400 mt-0.5">Low confidence — search manually</p>
+            <p className="text-[10px] text-amber-400 mt-0.5">Uncertain or conflicting signals — confirm manually</p>
           )}
           {job.status === 'error' && (
             <p className="text-[10px] text-gray-500 mt-0.5 truncate">{job.errorMsg}</p>
@@ -382,6 +385,26 @@ function JobCard({
 
 type UIMode = 'idle' | 'error';
 
+function getGuideCrop(video: HTMLVideoElement, guide: HTMLElement) {
+  const videoRect = video.getBoundingClientRect();
+  const guideRect = guide.getBoundingClientRect();
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+
+  if (!videoWidth || !videoHeight || !videoRect.width || !videoRect.height) return null;
+
+  const scale = Math.max(videoRect.width / videoWidth, videoRect.height / videoHeight);
+  const offsetX = (videoRect.width - videoWidth * scale) / 2;
+  const offsetY = (videoRect.height - videoHeight * scale) / 2;
+  const left = Math.max(0, (guideRect.left - videoRect.left - offsetX) / scale);
+  const top = Math.max(0, (guideRect.top - videoRect.top - offsetY) / scale);
+  const right = Math.min(videoWidth, (guideRect.right - videoRect.left - offsetX) / scale);
+  const bottom = Math.min(videoHeight, (guideRect.bottom - videoRect.top - offsetY) / scale);
+
+  if (right <= left || bottom <= top) return null;
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 export function CardScanner() {
   const uid = useId();
   const [mode, setMode]           = useState<UIMode>('idle');
@@ -403,6 +426,7 @@ export function CardScanner() {
   const [serverConnected, setServerConnected] = useState<boolean | null>(null);
 
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
+  const cardGuideRef = useRef<HTMLDivElement>(null);
   const inlineStreamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastScanTimeRef = useRef(0);
@@ -500,20 +524,16 @@ export function CardScanner() {
     setShotFlash(true);
     setTimeout(() => setShotFlash(false), 180);
 
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-
-    // Crop to the card guide area (60% width, 2.5:3.5 aspect ratio, centered)
-    const cardW = Math.floor(vw * 0.60);
-    const cardH = Math.floor(cardW * (3.5 / 2.5));
-    const cardX = Math.floor((vw - cardW) / 2);
-    const cardY = Math.floor((vh - cardH) / 2);
+    const guide = cardGuideRef.current;
+    const crop = guide && getGuideCrop(video, guide);
+    if (!crop) return;
 
     const canvas = document.createElement('canvas');
-    canvas.width = cardW;
-    canvas.height = cardH;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+    canvas.width = Math.round(crop.width);
+    canvas.height = Math.round(crop.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob(blob => {
       if (!blob) return;
@@ -549,22 +569,18 @@ export function CardScanner() {
         return;
       }
 
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      if (!vw || !vh) return;
-
-      const cardW = Math.floor(vw * 0.60);
-      const cardH = Math.floor(cardW * (3.5 / 2.5));
-      const cardX = Math.floor((vw - cardW) / 2);
-      const cardY = Math.floor((vh - cardH) / 2);
+      const guide = cardGuideRef.current;
+      const crop = guide && getGuideCrop(video, guide);
+      if (!crop) return;
 
       // Small canvas just for detection (downscale for speed)
       const canvas = document.createElement('canvas');
       const scale = 0.15;
-      canvas.width = Math.floor(cardW * scale);
-      canvas.height = Math.floor(cardH * scale);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, canvas.width, canvas.height);
+      canvas.width = Math.max(1, Math.floor(crop.width * scale));
+      canvas.height = Math.max(1, Math.floor(crop.height * scale));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+      ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
 
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imgData.data;
@@ -692,7 +708,8 @@ export function CardScanner() {
   const addableJobs = jobs.filter(j =>
     j.status === 'done' &&
     j.matches.length > 0 &&
-    j.matches[0].confidence >= 0.5 &&
+    j.matches[0].confidence >= 0.85 &&
+    (j.matches.length === 1 || j.matches[0].confidence - j.matches[1].confidence >= 0.08) &&
     !(batchOwned[j.matches[0].id]?.quantity > 0)
   );
 
@@ -787,6 +804,7 @@ export function CardScanner() {
                 {/* Card outline guide */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div
+                    ref={cardGuideRef}
                     className="relative rounded-xl border-2 border-amber-400/60"
                     style={{
                       width: '60%',

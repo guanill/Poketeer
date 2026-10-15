@@ -229,20 +229,34 @@ def _merge(
     seen: set[str] = set()
     merged: list[dict] = []
 
-    # OCR hits first (possibly boosted if also in visual)
+    # OCR evidence is the primary signal; visual evidence reranks and corroborates.
     for hit in ocr_hits:
         cid = hit["id"]
         if cid in visual_by_id:
-            combined_conf = min((hit["confidence"] + visual_by_id[cid]["confidence"]) / 2 * 1.2, 1.0)
+            visual_conf = visual_by_id[cid]["confidence"]
+            combined_conf = min(
+                hit["confidence"] * 0.7
+                + visual_conf * 0.3
+                + min(hit["confidence"], visual_conf) * 0.1,
+                0.99,
+            )
             merged.append({**hit, "confidence": round(combined_conf, 4), "method": "ocr+visual"})
         else:
-            merged.append({**hit, "method": "ocr"})
+            merged.append({
+                **hit,
+                "confidence": round(hit["confidence"] * 0.7, 4),
+                "method": "ocr",
+            })
         seen.add(cid)
 
-    # Remaining visual-only hits
+    # A visual-only result is a candidate to confirm, not an auto-add match.
     for hit in visual_hits:
         if hit["id"] not in seen:
-            merged.append(hit)
+            merged.append({
+                **hit,
+                "confidence": round(hit["confidence"] * 0.3, 4),
+                "method": "visual",
+            })
             seen.add(hit["id"])
 
     merged.sort(key=lambda x: -x["confidence"])
